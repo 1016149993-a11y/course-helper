@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网课观看辅助（WeLearn / 学习通 / ULearning）
 // @namespace    local.dsl-course-helper
-// @version      0.5.2
+// @version      0.5.3
 // @description  记忆播放位置、章节跳转、倍速播放（0.5x~16x）、自动下一章节；支持自动答题（默认关闭，需配合题库/规则使用）
 // @author       1016149993-a11y
 // @license      MIT
@@ -580,6 +580,7 @@
   }
 
   // 学习通专用推进：点击"下一节"按钮（PCount.next）翻到下一张卡，不跳过同章节卡
+  // 三种按钮形态：#prevNextFocusNext（卡内翻页）、.prev_next.next、.nextChapter（测试/末尾卡翻页）
   // 当前卡有未播完的视频时不翻卡，让视频先播
   function chaoxingAdvance() {
     // 学习通题目页：未完成时优先自动答题，否则暂停连播
@@ -602,10 +603,10 @@
     }
     var docs = frameDocs();
     for (i = 0; i < docs.length; i++) {
-      var btn = docs[i].querySelector('#prevNextFocusNext, .prev_next.next');
+      var btn = docs[i].querySelector('#prevNextFocusNext, .prev_next.next, .nextChapter');
       if (btn && btn.style.display !== 'none' && btn.offsetWidth > 0) {
         if (advanceThrottled()) {
-          try { btn.click(); dbg('点击学习通"下一节"'); } catch (e) {}
+          try { btn.click(); dbg('点击学习通"下一节"按钮'); } catch (e) {}
           return 'next';
         }
         return 'wait';
