@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网课观看辅助（WeLearn / 学习通 / ULearning）
 // @namespace    local.dsl-course-helper
-// @version      0.4.7
+// @version      0.4.8
 // @description  记忆播放位置、章节跳转、倍速播放（0.5x~16x）—— 仅优化观看体验，不伪造观看记录、不刷时长、不刷题
 // @author       1016149993-a11y
 // @license      MIT
@@ -361,12 +361,21 @@
       var v = vids[i];
       if (v._dslAdvanced) continue; // 跳过刚播完、等待推进的
       try {
-        if (v.paused) {
-          var p = v.play();
-          if (p && p.catch) p.catch(function () { dbg('自动播放被浏览器拦截（需用户交互）'); });
-          dbg('自动播放视频');
-          return;
+        if (!v.paused) continue;
+        var p = v.play();
+        if (p && p.catch) {
+          p.catch(function () {
+            // 被浏览器策略拦截（iframe 无用户手势）→ 降级为静音播放
+            try {
+              v.muted = true;
+              var p2 = v.play();
+              if (p2 && p2.catch) p2.catch(function () { dbg('静音自动播放也被拦截'); });
+              dbg('自动播放被拦截，已转为静音播放');
+            } catch (e) {}
+          });
         }
+        dbg('尝试自动播放视频');
+        return;
       } catch (e) {}
     }
   }
