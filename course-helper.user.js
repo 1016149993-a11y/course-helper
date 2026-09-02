@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网课观看辅助（WeLearn / 学习通 / ULearning）
 // @namespace    local.dsl-course-helper
-// @version      0.3.0
+// @version      0.3.1
 // @description  记忆播放位置、章节跳转、倍速播放（0.5x~16x）—— 仅优化观看体验，不伪造观看记录、不刷时长、不刷题
 // @author       1016149993-a11y
 // @license      MIT
@@ -36,23 +36,42 @@
   var SPEED_KEY = 'dsl_speed';
   var POS_KEY = 'dsl_pos_';
   var NEXT_KEY = 'dsl_autonext';
+  var CUR_KEY = 'dsl_lastchap';
   var SPEEDS = [0.5, 1, 1.25, 1.5, 1.75, 2, 3, 4, 8, 16];
 
   // ---------- 工具 ----------
+  function dbg() {
+    try {
+      var args = ['[course-helper]'].concat(Array.prototype.slice.call(arguments));
+      console.log.apply(console, args);
+    } catch (e) {}
+  }
+
+  function toastIn(doc, msg) {
+    try {
+      var el = doc.getElementById(PANEL_ID + '-toast');
+      if (!el) {
+        el = doc.createElement('div');
+        el.id = PANEL_ID + '-toast';
+        el.style.cssText = 'position:fixed;right:16px;bottom:64px;z-index:2147483647;' +
+          'background:rgba(20,20,20,.85);color:#fff;padding:8px 14px;border-radius:6px;' +
+          'font:13px/1.4 sans-serif;opacity:0;transition:opacity .25s;pointer-events:none';
+        doc.documentElement.appendChild(el);
+      }
+      el.textContent = msg;
+      el.style.opacity = '1';
+      clearTimeout(el._t);
+      el._t = setTimeout(function () { el.style.opacity = '0'; }, 2500);
+    } catch (e) {}
+  }
+
   function toast(msg) {
-    var el = document.getElementById(PANEL_ID + '-toast');
-    if (!el) {
-      el = document.createElement('div');
-      el.id = PANEL_ID + '-toast';
-      el.style.cssText = 'position:fixed;right:16px;bottom:64px;z-index:2147483647;' +
-        'background:rgba(20,20,20,.85);color:#fff;padding:8px 14px;border-radius:6px;' +
-        'font:13px/1.4 sans-serif;opacity:0;transition:opacity .25s;pointer-events:none';
-      document.documentElement.appendChild(el);
-    }
-    el.textContent = msg;
-    el.style.opacity = '1';
-    clearTimeout(el._t);
-    el._t = setTimeout(function () { el.style.opacity = '0'; }, 2500);
+    toastIn(document, msg);
+    // iframe 里的提示同步到顶层页面，避免视频帧看不到
+    try {
+      var td = window.top && window.top.document;
+      if (td && td !== document) toastIn(td, msg);
+    } catch (e) {}
   }
 
   // 收集当前文档及所有同源 iframe（含嵌套）里的 video，跨域 iframe 直接跳过
@@ -125,12 +144,23 @@
     v.addEventListener('loadedmetadata', restorePos);
     v.addEventListener('play', restorePos);
     v.addEventListener('ended', function () {
+      v._dslEndedFired = true;
+      dbg('video ended');
       if (autoNextEnabled()) autoNext();
     });
     var last = 0;
     v.addEventListener('timeupdate', function () {
       var now = Date.now();
       if (now - last > 5000) { last = now; savePos(v); }
+      // 兜底：个别平台在结束前拦截 ended 事件，接近结尾时直接触发
+      try {
+        var d = v.duration;
+        if (!v._dslEndedFired && isFinite(d) && d > 0 && v.currentTime > 5 && d - v.currentTime < 1.5) {
+          v._dslEndedFired = true;
+          dbg('接近结尾，兜底触发自动下一章节');
+          if (autoNextEnabled()) autoNext();
+        }
+      } catch (e) {}
     });
   }
 
@@ -139,40 +169,62 @@
     try { return localStorage.getItem(NEXT_KEY) === '1'; } catch (e) { return false; }
   }
 
-  // 判断章节条目是否是"当前章节"：自身或近邻祖先带 active/current/selected 样式
+  // 判断章节条目是否是"当前章节"：自身或近邻祖先带选中态样式/属性
   function entryIsActive(e) {
     var el = e.el;
     if (!el || !el.isConnected) return false;
     var node = el;
-    for (var i = 0; i < 3 && node; i++) {
-      var cls = '';
-      try { cls = String(node.className || ''); } catch (e2) {}
-      if (/(active|current|selected|on)/i.test(cls)) return true;
+    for (var i = 0; i < 5 && node; i++, node = node.parentElement) {
       if (node.getAttribute && node.getAttribute('aria-current')) return true;
-      node = node.parentElement;
+      var cls = '';
+      try { cls = String(node.className || '').toLowerCase(); } catch (e2) {}
+      var toks = cls.split(/\s+/);
+      for (var j = 0; j < toks.length; j++) {
+        var t = toks[j];
+        if (!t) continue;
+        if (/(active|current|selected|chosen|highlight|checked)/.test(t)) return true;
+        if (t === 'on' || t === 'cur' || /-on$/.test(t) || /^on-/.test(t)) return true;
+      }
     }
     return false;
   }
 
+  function rememberChapter(text) {
+    try { localStorage.setItem(CUR_KEY, JSON.stringify({ t: text, at: Date.now() })); } catch (e) {}
+  }
+  function rememberedChapter() {
+    try {
+      var p = JSON.parse(localStorage.getItem(CUR_KEY));
+      if (p && p.t) return p.t;
+    } catch (e) {}
+    return '';
+  }
+
   function autoNext() {
     var links = chapterLinks();
+    dbg('自动下一章节触发，检测到章节条目：', links.length);
     if (!links.length) { toast('未检测到章节列表，无法自动切换'); return; }
-    var idx = -1;
+    var idx = -1, how = '';
+    var curHref = location.href.replace(/#.*$/, '');
+    var lastT = rememberedChapter();
     for (var i = 0; i < links.length; i++) {
       var e = links[i];
-      if (e.href && e.href.replace(/#.*$/, '') === location.href.replace(/#.*$/, '')) { idx = i; break; }
-      if (entryIsActive(e)) { idx = i; break; }
+      if (!how && e.href && e.href.replace(/#.*$/, '') === curHref) { idx = i; how = 'url'; }
+      if (idx < 0 && entryIsActive(e)) { idx = i; how = '样式'; }
+      if (idx < 0 && lastT && e.text === lastT) { idx = i; how = '上次记录'; }
     }
+    dbg('当前章节定位：', idx, how || '（未定位到）');
     if (idx < 0) { toast('无法定位当前章节，未自动切换'); return; }
     if (idx >= links.length - 1) { toast('已是最后一节'); return; }
     var next = links[idx + 1];
+    rememberChapter(next.text);
     toast('本节播完，3 秒后进入：' + next.text);
     setTimeout(function () {
       try {
         if (next.href) { location.href = next.href; return; }
         if (next.el && next.el.isConnected) { next.el.click(); toast('已切换：' + next.text); }
         else { toast('下一节入口已失效，请手动切换'); }
-      } catch (e) {}
+      } catch (e) { dbg('切换失败', e); }
     }, 3000);
   }
 
@@ -185,7 +237,7 @@
   var CHAPTER_HREF_RE = /(video|chapter|learn|course|work|detail|knowledge|card|list)/i;
   var CHAPTER_TEXT_RE = /(第\s*[\d一二三四五六七八九十百]+\s*[章节讲单元课]|chapter|unit\s*[\d一二三四五六七八九十]|lesson|section\s*\d|module\s*\d)/i;
 
-  // 收集当前文档 + 同源 iframe（含嵌套），供章节扫描使用
+  // 收集当前文档 + 同源 iframe（含嵌套）
   function scanDocs() {
     var docs = [document];
     for (var i = 0; i < docs.length && docs.length < 20; i++) {
@@ -193,6 +245,13 @@
         try { if (f.contentDocument) docs.push(f.contentDocument); } catch (e) {}
       });
     }
+    return docs;
+  }
+  // 章节扫描用：再加上同源的父页面/顶层页面（视频在 iframe、章节菜单在父页的场景）
+  function frameDocs() {
+    var docs = scanDocs();
+    try { var pd = window.parent && window.parent.document; if (pd && docs.indexOf(pd) === -1) docs.push(pd); } catch (e) {}
+    try { var td = window.top && window.top.document; if (td && docs.indexOf(td) === -1) docs.push(td); } catch (e) {}
     return docs;
   }
 
@@ -203,7 +262,7 @@
       seenTargets.push(target);
       out.push({ href: href || '', text: text, el: target });
     }
-    scanDocs().forEach(function (doc) {
+    frameDocs().forEach(function (doc) {
       // Pass A：<a> 真链接 / 章节文本 JS 菜单
       doc.querySelectorAll('a').forEach(function (a) {
         var text = (a.textContent || '').replace(/\s+/g, ' ').trim();
@@ -229,6 +288,19 @@
       });
     });
     return out.slice(0, 80);
+  }
+
+  // 仅统计当前文档自身的章节入口（用于 iframe 是否自建面板的判断，不含父页）
+  function ownLinkCount() {
+    var n = 0;
+    document.querySelectorAll('a').forEach(function (a) {
+      var text = (a.textContent || '').replace(/\s+/g, ' ').trim();
+      if (text.length < 2 || text.length > 60) return;
+      var href = '';
+      try { href = a.href || ''; } catch (e) {}
+      if (/^https?:/i.test(href) ? CHAPTER_HREF_RE.test(href) : CHAPTER_TEXT_RE.test(text)) n++;
+    });
+    return n;
   }
 
   // 找元素自身或祖先中带 click: 绑定的可点击容器
@@ -319,6 +391,7 @@
         item.style.cssText = 'padding:4px 6px;border-radius:4px;cursor:pointer;overflow:hidden;' +
           'text-overflow:ellipsis;white-space:nowrap';
         item.addEventListener('click', function () {
+          rememberChapter(l.text);
           if (l.href) { location.href = l.href; return; }
           try {
             if (l.el && l.el.isConnected) { l.el.click(); toast('已点击「' + l.text + '」'); }
@@ -359,7 +432,7 @@
     }
     if (panelExistsUpstairs()) { created = true; return; }
     // 顶层没建面板时：有视频的播放器帧、或有章节菜单的目录帧都自己建面板
-    if (document.querySelector('video') || chapterLinks().length > 0) {
+    if (document.querySelector('video') || ownLinkCount() > 0) {
       createPanel(); created = true;
     }
   }
