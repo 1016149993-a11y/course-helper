@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网课观看辅助（WeLearn / 学习通 / ULearning）
 // @namespace    local.dsl-course-helper
-// @version      0.5.0
+// @version      0.5.1
 // @description  记忆播放位置、章节跳转、倍速播放（0.5x~16x）—— 仅优化观看体验，不伪造观看记录、不刷时长、不刷题
 // @author       1016149993-a11y
 // @license      MIT
@@ -354,6 +354,27 @@
     return null;
   }
 
+  // 学习通专用推进：点击"下一节"按钮（PCount.next）翻到下一张卡，不跳过同章节卡
+  // 当前卡有未播完的视频时不翻卡，让视频先播
+  function chaoxingAdvance() {
+    var vids = allVideos();
+    for (var i = 0; i < vids.length; i++) {
+      if (!vids[i]._dslAdvanced) return null; // 有未播完视频，不翻卡
+    }
+    var docs = frameDocs();
+    for (i = 0; i < docs.length; i++) {
+      var btn = docs[i].querySelector('#prevNextFocusNext, .prev_next.next');
+      if (btn && btn.style.display !== 'none' && btn.offsetWidth > 0) {
+        if (advanceThrottled()) {
+          try { btn.click(); dbg('点击学习通"下一节"'); } catch (e) {}
+          return 'next';
+        }
+        return 'wait';
+      }
+    }
+    return null;
+  }
+
   // 通用自动播放：非优学院页面（学习通等）下，主循环自动播放暂停中的视频
   function autoPlayVideos() {
     var vids = allVideos();
@@ -384,6 +405,9 @@
     // 优学院/ULearning：轮询推进（弹窗 → 续播 → 课件滚动 → 翻页）
     var r = ulearningAdvance(endedVideo);
     if (r) { if (r === 'next') toast('已自动进入下一节'); return; }
+    // 学习通：点击"下一节"翻下一张卡
+    r = chaoxingAdvance();
+    if (r) { if (r === 'next') toast('已进入下一节'); return; }
     // —— 通用路径：章节列表定位 ——
     // tick 驱动（endedVideo 为空）时做冷却，避免无视频页连续跳章；ended 触发不限制
     if (!endedVideo) {
@@ -661,6 +685,7 @@
     allVideos().forEach(function (v) { watchVideo(v); });
     if (autoNextEnabled()) {
       var r = ulearningAdvance(null); // 连播：每轮驱动一次推进（含无视频页自动跳下一页）
+      if (!r) r = chaoxingAdvance(); // 学习通：点"下一节"翻下一张卡
       if (!r) {
         if (allVideos().length === 0) {
           // 课件页（学习通等）常伴随同章节视频卡，不自动跳章避免跳过
