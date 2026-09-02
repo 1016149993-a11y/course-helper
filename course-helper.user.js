@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网课观看辅助（WeLearn / 学习通 / ULearning）
 // @namespace    local.dsl-course-helper
-// @version      0.4.1
+// @version      0.4.2
 // @description  记忆播放位置、章节跳转、倍速播放（0.5x~16x）—— 仅优化观看体验，不伪造观看记录、不刷时长、不刷题
 // @author       1016149993-a11y
 // @license      MIT
@@ -31,6 +31,14 @@
 
 (function () {
   'use strict';
+
+  // 学习通各子域（mooc1/i.chaoxing.com 等）靠 document.domain 互通，
+  // 提前声明让脚本实例之间能跨 iframe 访问视频
+  try {
+    if (/(^|\.)chaoxing\.com$/.test(location.hostname) && document.domain !== 'chaoxing.com') {
+      document.domain = 'chaoxing.com';
+    }
+  } catch (e) {}
 
   var PANEL_ID = 'dsl-helper';
   var SPEED_KEY = 'dsl_speed';
@@ -77,13 +85,28 @@
 
   // 收集当前文档及所有同源 iframe（含嵌套）里的 video，跨域 iframe 直接跳过
   function allVideos() {
-    var out = [], docs = [document];
-    for (var i = 0; i < docs.length && docs.length < 20; i++) {
+    var out = [], docs = scanDocs(), i;
+    for (i = 0; i < docs.length; i++) {
       out = out.concat(Array.prototype.slice.call(docs[i].querySelectorAll('video')));
-      docs[i].querySelectorAll('iframe').forEach(function (f) {
-        try { if (f.contentDocument) docs.push(f.contentDocument); } catch (e) {}
-      });
     }
+    // 常规扫描一无所获时，尝试穿透 Shadow DOM（新版播放器可能把 video 藏进去）
+    if (!out.length) {
+      for (i = 0; i < docs.length; i++) collectShadowVideos(docs[i], out);
+    }
+    return out;
+  }
+
+  function collectShadowVideos(root, out) {
+    try {
+      var all = root.querySelectorAll('*');
+      for (var i = 0; i < all.length && i < 800; i++) {
+        var sr = all[i].shadowRoot;
+        if (sr) {
+          out = out.concat(Array.prototype.slice.call(sr.querySelectorAll('video')));
+          collectShadowVideos(sr, out);
+        }
+      }
+    } catch (e) {}
     return out;
   }
 
@@ -142,6 +165,7 @@
   function watchVideo(v) {
     if (v._dslWatched) return;
     v._dslWatched = true;
+    dbg('发现视频:', String(v.currentSrc || v.src || '(无src/blob)').slice(0, 80));
     v.addEventListener('loadedmetadata', restorePos);
     v.addEventListener('play', restorePos);
     v.addEventListener('ended', function () {

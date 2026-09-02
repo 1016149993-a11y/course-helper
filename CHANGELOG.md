@@ -4,6 +4,16 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.2] - 2026-09-02
+
+### 修复
+
+- **学习通视频识别增强**：
+  - 脚本启动时对 `*.chaoxing.com` 域声明 `document.domain`，打通学习通各子域 iframe
+    （课程页 → 知识卡片 → 视频 iframe 的多层嵌套）之间的访问
+  - 常规扫描找不到 `<video>` 时，自动**穿透 Shadow DOM** 递归搜索（新版播放器可能使用）
+  - 找到视频时输出控制台日志 `[course-helper] 发现视频: ...`，便于排查
+
 ## [0.4.1] - 2026-09-02
 
 ### 新增
