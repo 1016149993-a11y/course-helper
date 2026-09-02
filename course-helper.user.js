@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网课观看辅助（WeLearn / 学习通 / ULearning）
 // @namespace    local.dsl-course-helper
-// @version      0.4.4
+// @version      0.4.5
 // @description  记忆播放位置、章节跳转、倍速播放（0.5x~16x）—— 仅优化观看体验，不伪造观看记录、不刷时长、不刷题
 // @author       1016149993-a11y
 // @license      MIT
@@ -13,8 +13,8 @@
 // @grant        none
 // @homepageURL  https://github.com/1016149993-a11y/course-helper
 // @supportURL   https://github.com/1016149993-a11y/course-helper/issues
-// @updateURL    https://raw.githubusercontent.com/1016149993-a11y/course-helper/main/course-helper.user.js
-// @downloadURL  https://raw.githubusercontent.com/1016149993-a11y/course-helper/main/course-helper.user.js
+// @updateURL    https://cdn.jsdelivr.net/gh/1016149993-a11y/course-helper@main/course-helper.user.js
+// @downloadURL  https://cdn.jsdelivr.net/gh/1016149993-a11y/course-helper@main/course-helper.user.js
 // ==/UserScript==
 //
 // 安装：Tampermonkey 或 脚本猫（ScriptCat）→ 直接打开本文件的 Raw 链接会提示安装；

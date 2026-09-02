@@ -4,6 +4,16 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.5] - 2026-09-02
+
+### 变更
+
+- **更新源切换为 jsDelivr CDN**：`@updateURL` / `@downloadURL` 改为
+  `https://cdn.jsdelivr.net/gh/1016149993-a11y/course-helper@main/course-helper.user.js`
+  - 原因：`raw.githubusercontent.com` 在国内常无法访问，导致脚本管理器自动更新失败、
+    用户长期停留在无控制台日志的旧版本（症状：学习通控制台无任何 `[course-helper]` 日志）
+  - jsDelivr 在国内可达，可正常自动更新
+
 ## [0.4.4] - 2026-09-02
 
 ### 修复
