@@ -4,6 +4,14 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.5.2] - 2026-09-02
+
+### 修复
+
+- **学习通测试页可翻过**：`chaoxingAdvance` 选择器新增 `.nextChapter`
+  （`onclick="closeDeleteWindow();PCount.next(...)"`），测试/末尾卡也能用"下一节"翻过，
+  不再因检测不到翻页按钮而整章跳过
+
 ## [0.5.1] - 2026-09-02
 
 ### 新增
