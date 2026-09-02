@@ -4,6 +4,14 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.7] - 2026-09-02
+
+### 新增
+
+- **通用自动播放（学习通等非优学院平台）**：`ulearningAdvance` 对非优学院页面返回 null，
+  此前切到新章节后视频不会自动播放。新增 `autoPlayVideos()`：主循环每轮在非优学院页面
+  自动播放暂停中的 `<video>`（跳过刚播完等待推进的）；浏览器拦截时输出日志提示
+
 ## [0.4.6] - 2026-09-02
 
 ### 修复

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网课观看辅助（WeLearn / 学习通 / ULearning）
 // @namespace    local.dsl-course-helper
-// @version      0.4.6
+// @version      0.4.7
 // @description  记忆播放位置、章节跳转、倍速播放（0.5x~16x）—— 仅优化观看体验，不伪造观看记录、不刷时长、不刷题
 // @author       1016149993-a11y
 // @license      MIT
@@ -354,6 +354,23 @@
     return null;
   }
 
+  // 通用自动播放：非优学院页面（学习通等）下，主循环自动播放暂停中的视频
+  function autoPlayVideos() {
+    var vids = allVideos();
+    for (var i = 0; i < vids.length; i++) {
+      var v = vids[i];
+      if (v._dslAdvanced) continue; // 跳过刚播完、等待推进的
+      try {
+        if (v.paused) {
+          var p = v.play();
+          if (p && p.catch) p.catch(function () { dbg('自动播放被浏览器拦截（需用户交互）'); });
+          dbg('自动播放视频');
+          return;
+        }
+      } catch (e) {}
+    }
+  }
+
   function autoNext(endedVideo) {
     // 优学院/ULearning：轮询推进（弹窗 → 续播 → 课件滚动 → 翻页）
     var r = ulearningAdvance(endedVideo);
@@ -623,7 +640,10 @@
   setInterval(function () {
     maybeCreate();
     allVideos().forEach(function (v) { watchVideo(v); });
-    if (autoNextEnabled()) ulearningAdvance(null); // 连播：每轮驱动一次推进（含无视频页自动跳下一页）
+    if (autoNextEnabled()) {
+      var r = ulearningAdvance(null); // 连播：每轮驱动一次推进（含无视频页自动跳下一页）
+      if (!r) autoPlayVideos(); // 非优学院页面（学习通等）：自动播放暂停的视频
+    }
     if (!hasUserSpeed()) return; // 用户没选过倍速时不干预，保留平台自带倍速
     var s = savedSpeed();
     allVideos().forEach(function (v) {
