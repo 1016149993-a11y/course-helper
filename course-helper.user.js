@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网课观看辅助（WeLearn / 学习通 / ULearning）
 // @namespace    local.dsl-course-helper
-// @version      0.2.0
+// @version      0.2.1
 // @description  记忆播放位置、章节跳转、倍速播放（0.5x~16x）—— 仅优化观看体验，不伪造观看记录、不刷时长、不刷题
 // @author       1016149993-a11y
 // @license      MIT
@@ -70,7 +70,18 @@
   }
 
   // ---------- 倍速 ----------
-  function savedSpeed() { return parseFloat(localStorage.getItem(SPEED_KEY)) || 1; }
+  // localStorage 在沙盒 iframe（独立源）中会抛 SecurityError，必须保护
+  function savedSpeed() {
+    try {
+      var s = parseFloat(localStorage.getItem(SPEED_KEY));
+      if (s > 0) return s;
+    } catch (e) {}
+    return 1;
+  }
+  // 只有用户在面板里主动选过倍速才强制应用，避免覆盖平台自带的倍速控制
+  function hasUserSpeed() {
+    try { return localStorage.getItem(SPEED_KEY) !== null; } catch (e) { return false; }
+  }
 
   function applySpeedAll(s) {
     allVideos().forEach(function (v) {
@@ -173,7 +184,7 @@
       b.textContent = s + 'x';
       b.style.cssText = 'border:1px solid #c5c5c5;background:#f5f5f5;border-radius:4px;padding:2px 7px;cursor:pointer';
       b.addEventListener('click', function () {
-        localStorage.setItem(SPEED_KEY, String(s));
+        try { localStorage.setItem(SPEED_KEY, String(s)); } catch (e) {}
         applySpeedAll(s);
         refreshSpeedBtns();
         toast('已设为 ' + s + 'x');
@@ -182,7 +193,7 @@
     });
     function refreshSpeedBtns() {
       Array.prototype.forEach.call(speedsBox.children, function (b) {
-        var active = parseFloat(b.textContent) === savedSpeed();
+        var active = hasUserSpeed() && parseFloat(b.textContent) === savedSpeed();
         b.style.background = active ? '#1a73e8' : '#f5f5f5';
         b.style.color = active ? '#fff' : '#222';
       });
@@ -233,9 +244,10 @@
   maybeCreate();
   setInterval(function () {
     maybeCreate();
+    allVideos().forEach(function (v) { watchVideo(v); });
+    if (!hasUserSpeed()) return; // 用户没选过倍速时不干预，保留平台自带倍速
     var s = savedSpeed();
     allVideos().forEach(function (v) {
-      watchVideo(v);
       try { if (v.playbackRate !== s) v.playbackRate = s; } catch (e) {}
     });
   }, 3000);
