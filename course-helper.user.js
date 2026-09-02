@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网课观看辅助（WeLearn / 学习通 / ULearning）
 // @namespace    local.dsl-course-helper
-// @version      0.4.9
+// @version      0.5.0
 // @description  记忆播放位置、章节跳转、倍速播放（0.5x~16x）—— 仅优化观看体验，不伪造观看记录、不刷时长、不刷题
 // @author       1016149993-a11y
 // @license      MIT
@@ -45,7 +45,7 @@
   var POS_KEY = 'dsl_pos_';
   var NEXT_KEY = 'dsl_autonext';
   var CUR_KEY = 'dsl_lastchap';
-  var lastQuizTipAt = 0, lastEndedAt = 0, lastActionLocal = 0;
+  var lastQuizTipAt = 0, lastEndedAt = 0, lastActionLocal = 0, noVideoTicks = 0;
   var SPEEDS = [0.5, 1, 1.25, 1.5, 1.75, 2, 3, 4, 8, 16];
 
   // ---------- 工具 ----------
@@ -662,8 +662,23 @@
     if (autoNextEnabled()) {
       var r = ulearningAdvance(null); // 连播：每轮驱动一次推进（含无视频页自动跳下一页）
       if (!r) {
-        if (allVideos().length === 0) autoNext(null); // 非优学院无视频页（学习通等）：走章节列表推进
-        else autoPlayVideos(); // 有视频则自动播放
+        if (allVideos().length === 0) {
+          // 课件页（学习通等）常伴随同章节视频卡，不自动跳章避免跳过
+          var hasCw = false;
+          frameDocs().forEach(function (d) {
+            if (d.querySelector('.doc-wrapper, .doc-player-component, .file-doc, .file-ppt, .doc-iframe')) hasCw = true;
+          });
+          if (hasCw) {
+            dbg('课件页，暂不自动跳章');
+          } else if (++noVideoTicks >= 3) {
+            // 连续 3 轮（约 9 秒）确认无视频，给懒加载的视频 iframe 留时间
+            noVideoTicks = 0;
+            autoNext(null);
+          }
+        } else {
+          noVideoTicks = 0;
+          autoPlayVideos();
+        }
       }
     }
     if (!hasUserSpeed()) return; // 用户没选过倍速时不干预，保留平台自带倍速

@@ -4,6 +4,16 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.5.0] - 2026-09-02
+
+### 修复
+
+- **学习通课件页跳过同章节视频**：学习通一个章节含多张卡片（课件卡 + 视频卡），
+  脚本看到课件卡"无视频"就直接跳下一章，把后面的视频卡跳过了。
+  - 课件页（含 `.doc-wrapper` / `.doc-player-component` / `.file-doc` / `.file-ppt` /
+    `.doc-iframe`）不再自动跳章，等用户手动翻卡或视频加载
+  - 无视频页需连续 3 轮（约 9 秒）确认无视频才推进，给懒加载的视频 iframe 留时间
+
 ## [0.4.9] - 2026-09-02
 
 ### 修复
