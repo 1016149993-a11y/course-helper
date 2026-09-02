@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网课观看辅助（WeLearn / 学习通 / ULearning）
 // @namespace    local.dsl-course-helper
-// @version      0.3.2
+// @version      0.3.3
 // @description  记忆播放位置、章节跳转、倍速播放（0.5x~16x）—— 仅优化观看体验，不伪造观看记录、不刷时长、不刷题
 // @author       1016149993-a11y
 // @license      MIT
@@ -238,9 +238,46 @@
       }
       // 3) 本页全部看完 → 官方"下一页"按钮
       var np = docs[i].querySelector('.next-page-btn.cursor');
-      if (np) { try { np.click(); dbg('已点击官方下一页按钮'); } catch (e) {} return 'next'; }
+      if (np) { try { np.click(); dbg('已点击官方下一页按钮'); scheduleAutoplay(endedVideo); } catch (e) {} return 'next'; }
     }
     return null;
+  }
+
+  // 自动切节后监视新页面并自动播放视频（30 秒窗口，跳过刚播完的视频）
+  function scheduleAutoplay(skipVideo) {
+    var deadline = Date.now() + 30000;
+    var timer = setInterval(function () {
+      if (Date.now() > deadline || !autoNextEnabled()) { clearInterval(timer); return; }
+      var docs = frameDocs();
+      for (var i = 0; i < docs.length; i++) {
+        try {
+          var modal = docs[i].querySelector('.modal.fade.in');
+          if (modal) { clearInterval(timer); autoNext(skipVideo); return; } // 新页弹窗，交给推进逻辑
+          var videos = docs[i].querySelectorAll('.file-media');
+          if (!videos.length) continue;
+          var pp = docs[i].querySelectorAll('.mejs__button.mejs__playpause-button button');
+          // 已有视频在播 → 完成
+          for (var j = 0; j < videos.length; j++) {
+            var native = videos[j].querySelector ? (videos[j].querySelector('video') || videos[j]) : videos[j];
+            if (native !== skipVideo && native && !native.paused) { clearInterval(timer); dbg('下一节视频已在播放'); return; }
+          }
+          // 点暂停中的 mejs 播放键
+          for (var k = 0; k < videos.length; k++) {
+            native = videos[k].querySelector ? (videos[k].querySelector('video') || videos[k]) : videos[k];
+            if (native === skipVideo) continue;
+            if (pp[k] && pp[k].getAttribute('title') === '播放') {
+              pp[k].click(); dbg('自动播放下一节视频');
+              clearInterval(timer); return;
+            }
+          }
+          // 原生兜底
+          for (k = 0; k < videos.length; k++) {
+            native = videos[k].querySelector ? (videos[k].querySelector('video') || videos[k]) : videos[k];
+            if (native !== skipVideo && native.paused) { native.play(); dbg('原生自动播放下一节视频'); clearInterval(timer); return; }
+          }
+        } catch (e) {}
+      }
+    }, 2000);
   }
 
   function autoNext(endedVideo) {
@@ -270,8 +307,12 @@
     toast('本节播完，3 秒后进入：' + next.text);
     setTimeout(function () {
       try {
-        if (next.href) { location.href = next.href; return; }
-        if (next.el && next.el.isConnected) { next.el.click(); toast('已切换：' + next.text); }
+        if (next.href) {
+          try { sessionStorage.setItem('dsl_hop', '1'); } catch (e) {}
+          location.href = next.href;
+          return;
+        }
+        if (next.el && next.el.isConnected) { next.el.click(); toast('已切换：' + next.text); scheduleAutoplay(null); }
         else { toast('下一节入口已失效，请手动切换'); }
       } catch (e) { dbg('切换失败', e); }
     }, 3000);
@@ -487,6 +528,13 @@
   }
 
   maybeCreate();
+  // 自动切节后的整页跳转（href 方式）落地时，恢复自动播放
+  try {
+    if (sessionStorage.getItem('dsl_hop') === '1') {
+      sessionStorage.removeItem('dsl_hop');
+      if (autoNextEnabled()) scheduleAutoplay(null);
+    }
+  } catch (e) {}
   setInterval(function () {
     maybeCreate();
     allVideos().forEach(function (v) { watchVideo(v); });
