@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网课观看辅助（WeLearn / 学习通 / ULearning）
 // @namespace    local.dsl-course-helper
-// @version      0.2.2
+// @version      0.2.3
 // @description  记忆播放位置、章节跳转、倍速播放（0.5x~16x）—— 仅优化观看体验，不伪造观看记录、不刷时长、不刷题
 // @author       1016149993-a11y
 // @license      MIT
@@ -129,10 +129,11 @@
   }
 
   // ---------- 章节链接 ----------
-  // 两类可识别的章节入口：
+  // 三类可识别的章节入口：
   //   A. 真链接：href 为 http(s) 且包含平台常见关键词 → 直接跳转
-  //   B. JS 菜单：href 为 javascript:; / # / 无 href（学习通、优学院等 SPA 常见）
-  //      按文本特征识别（第X章/节/单元、Unit/Chapter/Lesson 等），点击时模拟原生 click
+  //   B. JS 菜单：<a href="javascript:;"> 等，按文本特征识别（第X章/Unit X...），模拟 click
+  //   C. 框架绑定菜单：Knockout data-bind="text: ..." 文本节点（优学院/U学院等 SPA），
+  //      向上找 data-bind 含 click: 的可点击容器（li/a），模拟 click
   var CHAPTER_HREF_RE = /(video|chapter|learn|course|work|detail|knowledge|card|list)/i;
   var CHAPTER_TEXT_RE = /(第\s*[\d一二三四五六七八九十百]+\s*[章节讲单元课]|chapter|unit\s*[\d一二三四五六七八九十]|lesson|section\s*\d|module\s*\d)/i;
 
@@ -148,25 +149,43 @@
   }
 
   function chapterLinks() {
-    var seen = {}, out = [];
+    var seenHref = {}, seenTargets = [], out = [];
+    function addTarget(target, text, href) {
+      if (!target || seenTargets.indexOf(target) !== -1) return;
+      seenTargets.push(target);
+      out.push({ href: href || '', text: text, el: target });
+    }
     scanDocs().forEach(function (doc) {
+      // Pass A：<a> 真链接 / 章节文本 JS 菜单
       doc.querySelectorAll('a').forEach(function (a) {
         var text = (a.textContent || '').replace(/\s+/g, ' ').trim();
         if (text.length < 2 || text.length > 60) return;
         var realHref = '';
         try { realHref = a.href || ''; } catch (e) {}
-        var isHttp = /^https?:/i.test(realHref);
-        var ok = isHttp
-          ? CHAPTER_HREF_RE.test(realHref)
-          : CHAPTER_TEXT_RE.test(text); // javascript:; / # / 无 href 的 JS 菜单
-        if (!ok) return;
-        var key = isHttp ? realHref : 'js:' + text;
-        if (seen[key]) return;
-        seen[key] = 1;
-        out.push({ href: isHttp ? realHref : '', text: text, el: a });
+        if (/^https?:/i.test(realHref)) {
+          if (CHAPTER_HREF_RE.test(realHref) && !seenHref[realHref]) {
+            seenHref[realHref] = 1;
+            addTarget(a, text, realHref);
+          }
+        } else if (CHAPTER_TEXT_RE.test(text)) {
+          addTarget(el_closestClickable(a) || a, text, '');
+        }
+      });
+      // Pass B：Knockout 等框架的 data-bind 文本节点
+      doc.querySelectorAll('[data-bind]').forEach(function (el) {
+        var bind = el.getAttribute('data-bind') || '';
+        if (!/text\s*:/.test(bind)) return;
+        var text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+        if (text.length < 2 || text.length > 60) return;
+        addTarget(el_closestClickable(el) || (el.tagName === 'A' ? el : null), text, '');
       });
     });
     return out.slice(0, 80);
+  }
+
+  // 找元素自身或祖先中带 click: 绑定的可点击容器
+  function el_closestClickable(el) {
+    try { return el.closest('[data-bind*="click:"]'); } catch (e) { return null; }
   }
 
   // ---------- 面板 ----------
