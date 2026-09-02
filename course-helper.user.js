@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网课观看辅助（WeLearn / 学习通 / ULearning）
 // @namespace    local.dsl-course-helper
-// @version      0.4.8
+// @version      0.4.9
 // @description  记忆播放位置、章节跳转、倍速播放（0.5x~16x）—— 仅优化观看体验，不伪造观看记录、不刷时长、不刷题
 // @author       1016149993-a11y
 // @license      MIT
@@ -385,6 +385,15 @@
     var r = ulearningAdvance(endedVideo);
     if (r) { if (r === 'next') toast('已自动进入下一节'); return; }
     // —— 通用路径：章节列表定位 ——
+    // tick 驱动（endedVideo 为空）时做冷却，避免无视频页连续跳章；ended 触发不限制
+    if (!endedVideo) {
+      try {
+        if (Date.now() - (parseInt(localStorage.getItem('dsl_chapat'), 10) || 0) < 10000) {
+          dbg('章节切换冷却中');
+          return;
+        }
+      } catch (e) {}
+    }
     var links = chapterLinks();
     dbg('自动下一章节触发，检测到章节条目：', links.length);
     if (!links.length) { toast('未检测到章节列表，无法自动切换'); return; }
@@ -402,6 +411,7 @@
     if (idx >= links.length - 1) { toast('已是最后一节'); return; }
     var next = links[idx + 1];
     rememberChapter(next.text);
+    try { localStorage.setItem('dsl_chapat', String(Date.now())); } catch (e) {}
     toast('本节播完，3 秒后进入：' + next.text);
     setTimeout(function () {
       try {
@@ -651,7 +661,10 @@
     allVideos().forEach(function (v) { watchVideo(v); });
     if (autoNextEnabled()) {
       var r = ulearningAdvance(null); // 连播：每轮驱动一次推进（含无视频页自动跳下一页）
-      if (!r) autoPlayVideos(); // 非优学院页面（学习通等）：自动播放暂停的视频
+      if (!r) {
+        if (allVideos().length === 0) autoNext(null); // 非优学院无视频页（学习通等）：走章节列表推进
+        else autoPlayVideos(); // 有视频则自动播放
+      }
     }
     if (!hasUserSpeed()) return; // 用户没选过倍速时不干预，保留平台自带倍速
     var s = savedSpeed();

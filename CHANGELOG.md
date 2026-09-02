@@ -4,6 +4,16 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.9] - 2026-09-02
+
+### 修复
+
+- **学习通无视频页不推进**：学习通没有优学院的"下一页"按钮，`ulearningAdvance` 返回 null，
+  无视频页（纯文本/文档卡）主循环无事可做。现主循环对非优学院无视频页调用 `autoNext(null)`
+  走章节列表路径自动切下一章
+- 防连跳：tick 驱动的章节列表推进加 10 秒冷却（localStorage `dsl_chapat`），
+  避免新章节未加载完又跳下一章；ended 触发不受冷却限制
+
 ## [0.4.8] - 2026-09-02
 
 ### 修复
