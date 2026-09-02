@@ -4,6 +4,20 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.2] - 2026-09-02
+
+### 修复
+
+- **优学院/U学院自动下一章节失效（重写为平台专用路径）**：优学院切页不靠章节菜单，而是官方
+  "下一页"按钮（`.next-page-btn.cursor`）；播放器为 MediaElement.js（`.file-media`），
+  完成标记为 Knockout 绑定 `text: $root.i18nMessageText().finished`（由后端确认后出现）。
+  现在的推进顺序：
+  1. 关闭平台弹窗（`.modal.fade.in`）后重试
+  2. 续播当前页未完成的视频（跳过刚播完的，等待平台完成标记）
+  3. 本页全部看完 → 点击官方"下一页"按钮
+  4. 以上均不适用时回退到通用章节列表路径
+- 视频结束后等待 4 秒再推进，给平台完成标记的上报留出时间
+
 ## [0.3.1] - 2026-09-02
 
 ### 修复

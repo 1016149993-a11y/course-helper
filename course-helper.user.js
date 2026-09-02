@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网课观看辅助（WeLearn / 学习通 / ULearning）
 // @namespace    local.dsl-course-helper
-// @version      0.3.1
+// @version      0.3.2
 // @description  记忆播放位置、章节跳转、倍速播放（0.5x~16x）—— 仅优化观看体验，不伪造观看记录、不刷时长、不刷题
 // @author       1016149993-a11y
 // @license      MIT
@@ -146,7 +146,10 @@
     v.addEventListener('ended', function () {
       v._dslEndedFired = true;
       dbg('video ended');
-      if (autoNextEnabled()) autoNext();
+      if (!autoNextEnabled()) return;
+      v._dslAdvanced = true; // 该视频已消费，续播扫描时跳过
+      toast('本节播完，4 秒后进入下一节…');
+      setTimeout(function () { autoNext(v); }, 4000);
     });
     var last = 0;
     v.addEventListener('timeupdate', function () {
@@ -158,7 +161,10 @@
         if (!v._dslEndedFired && isFinite(d) && d > 0 && v.currentTime > 5 && d - v.currentTime < 1.5) {
           v._dslEndedFired = true;
           dbg('接近结尾，兜底触发自动下一章节');
-          if (autoNextEnabled()) autoNext();
+          if (!autoNextEnabled()) return;
+          v._dslAdvanced = true;
+          toast('本节播完，4 秒后进入下一节…');
+          setTimeout(function () { autoNext(v); }, 4000);
         }
       } catch (e) {}
     });
@@ -200,7 +206,50 @@
     return '';
   }
 
-  function autoNext() {
+  // 优学院/ULearning 专用推进逻辑（基于官方"下一页"按钮与 KO 完成标记，参考社区实现机制）
+  // 返回：'modal'（弹窗已处理需重试）| 'play'（已续播下个视频）| 'next'（已点下一页）| null（不适用）
+  function ulearningAdvance(endedVideo) {
+    var docs = frameDocs();
+    var i, j;
+    // 1) 平台弹窗（统计/提示）挡路 → 点掉后重试
+    for (i = 0; i < docs.length; i++) {
+      var modal = docs[i].querySelector('.modal.fade.in');
+      if (modal) {
+        var btns = modal.querySelectorAll('.btn-hollow, .btn-submit');
+        if (btns.length) { try { btns[btns.length - 1].click(); dbg('已关闭平台弹窗'); } catch (e) {} }
+        return 'modal';
+      }
+    }
+    // 2) 视频页：先播完当前页未完成的视频
+    for (i = 0; i < docs.length; i++) {
+      var videos = docs[i].querySelectorAll('.file-media');
+      if (!videos.length) continue;
+      var finished = docs[i].querySelectorAll("[data-bind='text: $root.i18nMessageText().finished']");
+      for (j = 0; j < videos.length; j++) {
+        var box = videos[j];
+        var native = box.querySelector ? (box.querySelector('video') || box) : box;
+        if (native === endedVideo || native._dslAdvanced) continue;
+        if (finished[j]) continue; // 平台已标记看完
+        try {
+          var pp = docs[i].querySelectorAll('.mejs__button.mejs__playpause-button button');
+          if (pp[j] && pp[j].getAttribute('title') === '播放') { pp[j].click(); dbg('续播第', j + 1, '个视频'); return 'play'; }
+          if (native.paused) { native.play(); dbg('原生续播第', j + 1, '个视频'); return 'play'; }
+        } catch (e) {}
+      }
+      // 3) 本页全部看完 → 官方"下一页"按钮
+      var np = docs[i].querySelector('.next-page-btn.cursor');
+      if (np) { try { np.click(); dbg('已点击官方下一页按钮'); } catch (e) {} return 'next'; }
+    }
+    return null;
+  }
+
+  function autoNext(endedVideo) {
+    // 优学院/ULearning：官方"下一页"按钮路径优先
+    var r = ulearningAdvance(endedVideo);
+    if (r === 'modal') { toast('页面有弹窗，3 秒后重试'); setTimeout(function () { autoNext(endedVideo); }, 3000); return; }
+    if (r === 'play') return;
+    if (r === 'next') { toast('已自动进入下一节'); return; }
+    // —— 通用路径：章节列表定位 ——
     var links = chapterLinks();
     dbg('自动下一章节触发，检测到章节条目：', links.length);
     if (!links.length) { toast('未检测到章节列表，无法自动切换'); return; }
