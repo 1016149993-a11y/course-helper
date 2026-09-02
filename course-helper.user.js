@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         网课观看辅助（WeLearn / 学习通 / ULearning）
 // @namespace    local.dsl-course-helper
-// @version      0.5.1
-// @description  记忆播放位置、章节跳转、倍速播放（0.5x~16x）—— 仅优化观看体验，不伪造观看记录、不刷时长、不刷题
+// @version      0.5.2
+// @description  记忆播放位置、章节跳转、倍速播放（0.5x~16x）、自动下一章节；支持自动答题（默认关闭，需配合题库/规则使用）
 // @author       1016149993-a11y
 // @license      MIT
 // @match        *://*.chaoxing.com/*
@@ -26,8 +26,9 @@
 //   2. 章节：列出当前页面检测到的章节/课程链接，点击跳转（通用扫描，不针对某平台写死）。
 //   3. 记忆位置：每个视频的播放位置存 localStorage，刷新后自动续播（弹提示）。
 //   4. 自动下一章节（连播）：默认关闭，需在面板手动勾选；视频正常播完 3 秒后
-//      自动进入下一章节。仅是连播辅助，播放本身仍真实进行。
-//   它不会模拟播放、不会在后台挂机、不伪造任何观看时长。
+//      自动进入下一章节。播放本身仍真实进行。
+//   5. 自动答题：检测到题目页时可自动作答（默认关闭，需在面板手动勾选；
+//      需要题库或平台规则支持，请自行扩展）。
 
 (function () {
   'use strict';
@@ -45,8 +46,18 @@
   var POS_KEY = 'dsl_pos_';
   var NEXT_KEY = 'dsl_autonext';
   var CUR_KEY = 'dsl_lastchap';
+  var QUIZ_KEY = 'dsl_quizpause_';
+  var ANSWER_KEY = 'dsl_autoanswer';
+  var SUBMIT_KEY = 'dsl_autosubmit';
   var lastQuizTipAt = 0, lastEndedAt = 0, lastActionLocal = 0, noVideoTicks = 0;
   var SPEEDS = [0.5, 1, 1.25, 1.5, 1.75, 2, 3, 4, 8, 16];
+
+  // 各平台题目页 DOM 特征（用于自动连播时暂停，不是自动答题）
+  var QUIZ_SELECTORS = {
+    ulearning: '.question-setting-panel, .question-area, .question-wrapper, .question-box, .quiz-wrapper, .exam-container, .test-container, .task-question, .question-list, .question-main',
+    chaoxing: '.questionLi, .Zy_TItle, .Zy_Topic, .chaoxingquiz, #chaoxingquiz, .cxQuize, .jobQuize, .preview_title, .pd_title, .subNav_u, .Zy_TItle_c, .TiMu, .Py_Tk, .tkTitle, .topic-list, .questionBox',
+    unipus: '.question-box, .question-wrap, .test-container, .exam-wrapper, .quiz-wrapper, .question-container, .question-item, .question-content, .question-main'
+  };
 
   // ---------- 工具 ----------
   function dbg() {
@@ -202,6 +213,111 @@
     try { return localStorage.getItem(NEXT_KEY) === '1'; } catch (e) { return false; }
   }
 
+  // ---------- 自动答题（默认关闭，面板手动开启） ----------
+  function autoAnswerEnabled() {
+    try { return localStorage.getItem(ANSWER_KEY) === '1'; } catch (e) { return false; }
+  }
+  function autoSubmitEnabled() {
+    try { return localStorage.getItem(SUBMIT_KEY) === '1'; } catch (e) { return false; }
+  }
+
+  // 通用提交：匹配常见提交按钮，点击后清除暂停
+  function maybeSubmit(doc) {
+    if (!autoSubmitEnabled()) return false;
+    var submitBtn = doc.querySelector('.Zy_bottom input[value="提交"], .Zy_bottom button, .preview_submit, .Btn_cx, .Btn_blue_2, .btn_submit, .Btn_blue_1, .btn-submit, .submit-btn, input[type="submit"], button[type="submit"]');
+    if (!submitBtn) return false;
+    try {
+      submitBtn.click();
+      setQuizPaused(false);
+      toast('已自动提交答案');
+      dbg('已点击提交按钮');
+      return true;
+    } catch (e) { return false; }
+  }
+
+  // 自动答题入口。当前为基础框架：
+  // 按平台调用对应的答题器，没有内置题库时按“选第一个选项 / 填占位符”处理。
+  // 扩展方式：在对应平台分支中接入题库匹配/随机选择/固定规则。
+  function autoAnswer() {
+    if (!autoAnswerEnabled()) return false;
+    var q = detectQuizPage();
+    if (!q || isQuizDone(q)) return false;
+    try {
+      var changed = false;
+      if (q.platform === 'chaoxing') changed = answerChaoxing(q.doc);
+      else if (q.platform === 'ulearning') changed = answerUlearning(q.doc);
+      else if (q.platform === 'unipus') changed = answerUnipus(q.doc);
+      else { dbg('未支持的题目页平台，跳过自动答题：', q.platform); return false; }
+      if (changed) {
+        toast('已自动选择答案，准备提交');
+        // 短暂延迟后自动提交（给平台渲染留时间）
+        setTimeout(function () { maybeSubmit(q.doc); }, 800);
+      }
+      return changed;
+    } catch (e) { dbg('自动答题异常', e); }
+    return false;
+  }
+
+  // 学习通答题器（框架示例）：
+  // 接入题库后可替换为按题目文本匹配答案。
+  function answerChaoxing(doc) {
+    var questions = doc.querySelectorAll('.questionLi, .TiMu, .Zy_TItle, .Py_Tk');
+    if (!questions.length) { dbg('学习通题目页未识别到题目'); return false; }
+    var changed = false;
+    questions.forEach(function (q) {
+      // 单选/多选：选择第一个未选中的选项
+      var radios = q.querySelectorAll('input[type="radio"]');
+      if (radios.length && !q.querySelector('input[type="radio"]:checked')) {
+        radios[0].click(); changed = true;
+      }
+      var checks = q.querySelectorAll('input[type="checkbox"]');
+      if (checks.length && !q.querySelector('input[type="checkbox"]:checked')) {
+        checks[0].click(); changed = true;
+      }
+      // 填空：填入占位符（需要题库时替换为真实答案）
+      var inputs = q.querySelectorAll('input[type="text"], textarea, input:not([type])');
+      inputs.forEach(function (inp) {
+        if (!inp.value) { inp.value = '1'; changed = true; }
+      });
+    });
+    if (changed) dbg('学习通：已自动选择占位答案');
+    return changed;
+  }
+
+  // 优学院答题器（框架示例）
+  function answerUlearning(doc) {
+    var questions = doc.querySelectorAll('.question-setting-panel, .question-area, .question-wrapper, .question-box');
+    if (!questions.length) { dbg('优学院题目页未识别到题目'); return false; }
+    var changed = false;
+    questions.forEach(function (q) {
+      var options = q.querySelectorAll('.option, .question-option, label');
+      if (options.length && !q.querySelector('input:checked, .selected, .active')) {
+        options[0].click(); changed = true;
+      }
+    });
+    if (changed) dbg('优学院：已自动选择占位答案');
+    return changed;
+  }
+
+  // U校园/WeLearn 答题器（框架示例）
+  function answerUnipus(doc) {
+    var questions = doc.querySelectorAll('.question-box, .question-item, .question-content, .question-wrap');
+    if (!questions.length) { dbg('U校园题目页未识别到题目'); return false; }
+    var changed = false;
+    questions.forEach(function (q) {
+      var options = q.querySelectorAll('.option, .answer-item, label');
+      if (options.length && !q.querySelector('input:checked, .selected, .active')) {
+        options[0].click(); changed = true;
+      }
+      var inputs = q.querySelectorAll('input[type="text"], textarea');
+      inputs.forEach(function (inp) {
+        if (!inp.value) { inp.value = '1'; changed = true; }
+      });
+    });
+    if (changed) dbg('U校园：已自动选择占位答案');
+    return changed;
+  }
+
   // 判断章节条目是否是"当前章节"：自身或近邻祖先带选中态样式/属性
   function entryIsActive(e) {
     var el = e.el;
@@ -247,6 +363,109 @@
     }
   }
 
+  // ---------- 题目页检测（连播暂停与自动答题用） ----------
+  // 跨平台识别学习通 / 优学院 / U校园 的题目页，返回首次命中的信息对象；
+  // 不是题目页或已检测不到时返回 null。
+  function detectQuizPage() {
+    var docs = frameDocs();
+    var urlHint = /\/(quiz|exam|test|work)(\/|_|\.|$)/i.test(location.pathname) ||
+                  /(quiz|exam|test|work|question)/i.test(document.title || '');
+    for (var i = 0; i < docs.length; i++) {
+      var d = docs[i];
+      for (var platform in QUIZ_SELECTORS) {
+        if (d.querySelector(QUIZ_SELECTORS[platform])) {
+          return { doc: d, platform: platform, reason: 'selector' };
+        }
+      }
+      // 通用兜底：URL 疑似题目页且页面存在单选/多选/填空等作答元素
+      if (urlHint && (
+        d.querySelector('input[type="radio"], input[type="checkbox"]') ||
+        d.querySelector('.option, .answer, [class*="question"], [id*="question"], textarea, select')
+      )) {
+        return { doc: d, platform: 'generic', reason: 'url+options' };
+      }
+    }
+    return null;
+  }
+
+  // 判断当前题目页是否已经作答/完成，已完成则允许继续推进
+  function isQuizDone(info) {
+    if (!info || !info.doc) return false;
+    var d = info.doc;
+    // 优学院：结果面板、完成标记、或"下一页"已出现但题目区已消失
+    if (info.platform === 'ulearning') {
+      if (d.querySelector('.test-result, .result-panel, .score, .correct-rate, .finished, .completed, .submit-success')) return true;
+      if (!d.querySelector('.question-setting-panel, .question-area, .question-wrapper') && d.querySelector('.next-page-btn.cursor')) return true;
+    }
+    // 学习通：提交按钮仍可见视为未提交；否则若出现分数/答案/完成标记视为已提交
+    if (info.platform === 'chaoxing') {
+      if (d.querySelector('.Zy_bottom input[value="提交"], .Zy_bottom button, .preview_submit, .Btn_cx, .Btn_blue_2, .btn_submit, .Btn_blue_1')) return false;
+      var bodyText = (d.body && d.body.textContent) || '';
+      if (/(\d{1,3}\s*分|已完成|答案正确|成绩[：:]?\s*\d|得分[：:]?\s*\d|100\s*分)/.test(bodyText)) return true;
+      if (d.querySelector('.right_answer, .answer_p, .right-answer, .answerRight, .answer-right, .complete-btn')) return true;
+    }
+    // U校园
+    if (info.platform === 'unipus') {
+      if (d.querySelector('.result, .score, .correct, .finished, .completed, .submit-success, .test-result')) return true;
+    }
+    // 通用兜底：提交成功/得分/完成等文案
+    var bodyText2 = (d.body && d.body.textContent) || '';
+    if (/(提交成功|已完成|得分|成绩|满分|100\s*分|答案正确|回答正确)/.test(bodyText2)) return true;
+    return false;
+  }
+
+  function setQuizPaused(paused, reason) {
+    try {
+      var key = QUIZ_KEY + location.hostname;
+      if (!paused) { localStorage.removeItem(key); return; }
+      localStorage.setItem(key, JSON.stringify({ at: Date.now(), reason: reason || '', href: location.href }));
+    } catch (e) {}
+  }
+  function isQuizPaused() {
+    try {
+      var key = QUIZ_KEY + location.hostname;
+      var p = localStorage.getItem(key);
+      if (!p) return false;
+      var o = JSON.parse(p);
+      // 10 分钟自动过期，防止异常残留阻塞连播
+      if (Date.now() - (o.at || 0) > 600000) { localStorage.removeItem(key); return false; }
+      // 已经切页则不再暂停
+      if (o.href && o.href !== location.href) { localStorage.removeItem(key); return false; }
+      return true;
+    } catch (e) { return false; }
+  }
+
+  function quizTip() {
+    if (Date.now() - lastQuizTipAt > 30000) {
+      lastQuizTipAt = Date.now();
+      toast('本页是题目页，请手动作答后继续');
+    }
+  }
+
+  // 监听提交按钮，点击后尝试恢复连播；使用事件委托避免动态渲染导致绑定失效
+  function watchQuizSubmission() {
+    var q = detectQuizPage();
+    if (!q) return;
+    if (!q.doc._dslQuizDelegated) {
+      q.doc._dslQuizDelegated = true;
+      q.doc.addEventListener('click', function (e) {
+        var target = e.target;
+        var isSubmit = false;
+        if (target.closest) {
+          isSubmit = !!target.closest('input[type="submit"], button[type="submit"], .btn-submit, .submit-btn, .Zy_bottom input, .Btn_cx, .btn_submit, .Btn_blue_1, .Btn_blue_2, .preview_submit, .savePaper');
+        }
+        if (!isSubmit && target.nodeName === 'INPUT') {
+          var type = target.getAttribute('type') || '';
+          if (/submit/i.test(type)) isSubmit = true;
+        }
+        if (isSubmit) {
+          // 延迟等待平台渲染结果/切换页面
+          setTimeout(function () { setQuizPaused(false); dbg('检测到提交按钮点击，清除题目页暂停'); }, 1500);
+        }
+      });
+    }
+  }
+
   // 在文档中找实际的滚动容器：优先整页滚动，其次overflow为auto/scroll且内容溢出的最大容器
   function findScroller(doc) {
     try {
@@ -272,15 +491,21 @@
   function ulearningAdvance(endedVideo) {
     var docs = frameDocs();
     var i, j;
-    // 0) 题目页（章节测试）：不自动推进，留给用户作答
-    for (i = 0; i < docs.length; i++) {
-      if (docs[i].querySelector('.question-setting-panel, .question-area')) {
-        if (Date.now() - lastQuizTipAt > 30000) {
-          lastQuizTipAt = Date.now();
-          toast('本页是题目页，请手动作答后继续');
+    // 0) 题目页（章节测试）：未完成时优先自动答题，否则暂停连播
+    var q = detectQuizPage();
+    if (q) {
+      if (!isQuizDone(q)) {
+        if (autoAnswerEnabled()) {
+          autoAnswer();
+          // 如果开启了自动提交，本轮已触发提交，下轮再看结果
+          if (autoSubmitEnabled()) return 'quiz';
         }
+        setQuizPaused(true, 'quiz');
+        quizTip();
         return 'quiz';
       }
+      // 题目页但已作答/已完成，允许继续推进
+      setQuizPaused(false);
     }
     // 1) 平台弹窗（统计/提示）挡路 → 点掉，下一轮继续
     for (i = 0; i < docs.length; i++) {
@@ -357,6 +582,20 @@
   // 学习通专用推进：点击"下一节"按钮（PCount.next）翻到下一张卡，不跳过同章节卡
   // 当前卡有未播完的视频时不翻卡，让视频先播
   function chaoxingAdvance() {
+    // 学习通题目页：未完成时优先自动答题，否则暂停连播
+    var q = detectQuizPage();
+    if (q) {
+      if (!isQuizDone(q)) {
+        if (autoAnswerEnabled()) {
+          autoAnswer();
+          if (autoSubmitEnabled()) return 'quiz';
+        }
+        setQuizPaused(true, 'quiz');
+        quizTip();
+        return 'quiz';
+      }
+      setQuizPaused(false);
+    }
     var vids = allVideos();
     for (var i = 0; i < vids.length; i++) {
       if (!vids[i]._dslAdvanced) return null; // 有未播完视频，不翻卡
@@ -409,6 +648,20 @@
     r = chaoxingAdvance();
     if (r) { if (r === 'next') toast('已进入下一节'); return; }
     // —— 通用路径：章节列表定位 ——
+    // 兜底再次检测题目页，防止通用路径误跳到下一章
+    var q = detectQuizPage();
+    if (q) {
+      if (!isQuizDone(q)) {
+        if (autoAnswerEnabled()) {
+          autoAnswer();
+          if (autoSubmitEnabled()) return;
+        }
+        setQuizPaused(true, 'quiz');
+        quizTip();
+        return;
+      }
+      setQuizPaused(false);
+    }
     // tick 驱动（endedVideo 为空）时做冷却，避免无视频页连续跳章；ended 触发不限制
     if (!endedVideo) {
       try {
@@ -565,6 +818,10 @@
       '<div id="' + PANEL_ID + '-speeds" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px"></div>' +
       '<label style="display:flex;align-items:center;gap:6px;margin:0 0 10px;user-select:none;cursor:pointer">' +
       '<input type="checkbox" id="' + PANEL_ID + '-autonext">自动下一章节（连播）</label>' +
+      '<label style="display:flex;align-items:center;gap:6px;margin:0 0 6px;user-select:none;cursor:pointer">' +
+      '<input type="checkbox" id="' + PANEL_ID + '-autoanswer">自动答题（选首个选项）</label>' +
+      '<label style="display:flex;align-items:center;gap:6px;margin:0 0 10px;user-select:none;cursor:pointer">' +
+      '<input type="checkbox" id="' + PANEL_ID + '-autosubmit">自动提交</label>' +
       '<div style="margin:4px 0">章节</div>' +
       '<div id="' + PANEL_ID + '-links" style="max-height:180px;overflow:auto"></div></div>';
     document.documentElement.appendChild(panel);
@@ -614,6 +871,20 @@
     autoNextChk.addEventListener('change', function () {
       try { localStorage.setItem(NEXT_KEY, autoNextChk.checked ? '1' : '0'); } catch (e) {}
       toast(autoNextChk.checked ? '已开启自动下一章节' : '已关闭自动下一章节');
+    });
+
+    var autoAnswerChk = panel.querySelector('#' + PANEL_ID + '-autoanswer');
+    autoAnswerChk.checked = autoAnswerEnabled();
+    autoAnswerChk.addEventListener('change', function () {
+      try { localStorage.setItem(ANSWER_KEY, autoAnswerChk.checked ? '1' : '0'); } catch (e) {}
+      toast(autoAnswerChk.checked ? '已开启自动答题' : '已关闭自动答题');
+    });
+
+    var autoSubmitChk = panel.querySelector('#' + PANEL_ID + '-autosubmit');
+    autoSubmitChk.checked = autoSubmitEnabled();
+    autoSubmitChk.addEventListener('change', function () {
+      try { localStorage.setItem(SUBMIT_KEY, autoSubmitChk.checked ? '1' : '0'); } catch (e) {}
+      toast(autoSubmitChk.checked ? '已开启自动提交' : '已关闭自动提交');
     });
 
     var linksBox = panel.querySelector('#' + PANEL_ID + '-links');
@@ -683,7 +954,9 @@
   setInterval(function () {
     maybeCreate();
     allVideos().forEach(function (v) { watchVideo(v); });
-    if (autoNextEnabled()) {
+    watchQuizSubmission();
+    if (autoAnswerEnabled()) autoAnswer(); // 自动答题独立运行
+    if (autoNextEnabled() && !isQuizPaused()) {
       var r = ulearningAdvance(null); // 连播：每轮驱动一次推进（含无视频页自动跳下一页）
       if (!r) r = chaoxingAdvance(); // 学习通：点"下一节"翻下一张卡
       if (!r) {
