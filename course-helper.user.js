@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网课观看辅助（WeLearn / 学习通 / ULearning）
 // @namespace    local.dsl-course-helper
-// @version      0.2.3
+// @version      0.3.0
 // @description  记忆播放位置、章节跳转、倍速播放（0.5x~16x）—— 仅优化观看体验，不伪造观看记录、不刷时长、不刷题
 // @author       1016149993-a11y
 // @license      MIT
@@ -25,6 +25,8 @@
 //      注意：过高倍速可能被平台记为异常或超出视频解码能力，请按需使用。
 //   2. 章节：列出当前页面检测到的章节/课程链接，点击跳转（通用扫描，不针对某平台写死）。
 //   3. 记忆位置：每个视频的播放位置存 localStorage，刷新后自动续播（弹提示）。
+//   4. 自动下一章节（连播）：默认关闭，需在面板手动勾选；视频正常播完 3 秒后
+//      自动进入下一章节。仅是连播辅助，播放本身仍真实进行。
 //   它不会模拟播放、不会在后台挂机、不伪造任何观看时长。
 
 (function () {
@@ -33,6 +35,7 @@
   var PANEL_ID = 'dsl-helper';
   var SPEED_KEY = 'dsl_speed';
   var POS_KEY = 'dsl_pos_';
+  var NEXT_KEY = 'dsl_autonext';
   var SPEEDS = [0.5, 1, 1.25, 1.5, 1.75, 2, 3, 4, 8, 16];
 
   // ---------- 工具 ----------
@@ -121,11 +124,56 @@
     v._dslWatched = true;
     v.addEventListener('loadedmetadata', restorePos);
     v.addEventListener('play', restorePos);
+    v.addEventListener('ended', function () {
+      if (autoNextEnabled()) autoNext();
+    });
     var last = 0;
     v.addEventListener('timeupdate', function () {
       var now = Date.now();
       if (now - last > 5000) { last = now; savePos(v); }
     });
+  }
+
+  // ---------- 自动下一章节（默认关闭，面板手动开启） ----------
+  function autoNextEnabled() {
+    try { return localStorage.getItem(NEXT_KEY) === '1'; } catch (e) { return false; }
+  }
+
+  // 判断章节条目是否是"当前章节"：自身或近邻祖先带 active/current/selected 样式
+  function entryIsActive(e) {
+    var el = e.el;
+    if (!el || !el.isConnected) return false;
+    var node = el;
+    for (var i = 0; i < 3 && node; i++) {
+      var cls = '';
+      try { cls = String(node.className || ''); } catch (e2) {}
+      if (/(active|current|selected|on)/i.test(cls)) return true;
+      if (node.getAttribute && node.getAttribute('aria-current')) return true;
+      node = node.parentElement;
+    }
+    return false;
+  }
+
+  function autoNext() {
+    var links = chapterLinks();
+    if (!links.length) { toast('未检测到章节列表，无法自动切换'); return; }
+    var idx = -1;
+    for (var i = 0; i < links.length; i++) {
+      var e = links[i];
+      if (e.href && e.href.replace(/#.*$/, '') === location.href.replace(/#.*$/, '')) { idx = i; break; }
+      if (entryIsActive(e)) { idx = i; break; }
+    }
+    if (idx < 0) { toast('无法定位当前章节，未自动切换'); return; }
+    if (idx >= links.length - 1) { toast('已是最后一节'); return; }
+    var next = links[idx + 1];
+    toast('本节播完，3 秒后进入：' + next.text);
+    setTimeout(function () {
+      try {
+        if (next.href) { location.href = next.href; return; }
+        if (next.el && next.el.isConnected) { next.el.click(); toast('已切换：' + next.text); }
+        else { toast('下一节入口已失效，请手动切换'); }
+      } catch (e) {}
+    }, 3000);
   }
 
   // ---------- 章节链接 ----------
@@ -201,6 +249,8 @@
       '<div style="padding:0 10px 10px">' +
       '<div style="margin:4px 0">倍速</div>' +
       '<div id="' + PANEL_ID + '-speeds" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px"></div>' +
+      '<label style="display:flex;align-items:center;gap:6px;margin:0 0 10px;user-select:none;cursor:pointer">' +
+      '<input type="checkbox" id="' + PANEL_ID + '-autonext">自动下一章节（连播）</label>' +
       '<div style="margin:4px 0">章节</div>' +
       '<div id="' + PANEL_ID + '-links" style="max-height:180px;overflow:auto"></div></div>';
     document.documentElement.appendChild(panel);
@@ -244,6 +294,13 @@
       });
     }
     refreshSpeedBtns();
+
+    var autoNextChk = panel.querySelector('#' + PANEL_ID + '-autonext');
+    autoNextChk.checked = autoNextEnabled();
+    autoNextChk.addEventListener('change', function () {
+      try { localStorage.setItem(NEXT_KEY, autoNextChk.checked ? '1' : '0'); } catch (e) {}
+      toast(autoNextChk.checked ? '已开启自动下一章节' : '已关闭自动下一章节');
+    });
 
     var linksBox = panel.querySelector('#' + PANEL_ID + '-links');
     function renderLinks() {
