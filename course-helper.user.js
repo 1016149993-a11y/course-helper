@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网课观看辅助（WeLearn / 学习通 / ULearning）
 // @namespace    local.dsl-course-helper
-// @version      0.2.1
+// @version      0.2.2
 // @description  记忆播放位置、章节跳转、倍速播放（0.5x~16x）—— 仅优化观看体验，不伪造观看记录、不刷时长、不刷题
 // @author       1016149993-a11y
 // @license      MIT
@@ -129,18 +129,44 @@
   }
 
   // ---------- 章节链接 ----------
+  // 两类可识别的章节入口：
+  //   A. 真链接：href 为 http(s) 且包含平台常见关键词 → 直接跳转
+  //   B. JS 菜单：href 为 javascript:; / # / 无 href（学习通、优学院等 SPA 常见）
+  //      按文本特征识别（第X章/节/单元、Unit/Chapter/Lesson 等），点击时模拟原生 click
+  var CHAPTER_HREF_RE = /(video|chapter|learn|course|work|detail|knowledge|card|list)/i;
+  var CHAPTER_TEXT_RE = /(第\s*[\d一二三四五六七八九十百]+\s*[章节讲单元课]|chapter|unit\s*[\d一二三四五六七八九十]|lesson|section\s*\d|module\s*\d)/i;
+
+  // 收集当前文档 + 同源 iframe（含嵌套），供章节扫描使用
+  function scanDocs() {
+    var docs = [document];
+    for (var i = 0; i < docs.length && docs.length < 20; i++) {
+      docs[i].querySelectorAll('iframe').forEach(function (f) {
+        try { if (f.contentDocument) docs.push(f.contentDocument); } catch (e) {}
+      });
+    }
+    return docs;
+  }
+
   function chapterLinks() {
     var seen = {}, out = [];
-    document.querySelectorAll('a[href]').forEach(function (a) {
-      var href = a.href || '';
-      var text = (a.textContent || '').replace(/\s+/g, ' ').trim();
-      if (text.length < 2 || text.length > 60) return;
-      if (!/(video|chapter|learn|course|work|detail|knowledge|card|list)/i.test(href)) return;
-      if (seen[href]) return;
-      seen[href] = 1;
-      out.push({ href: href, text: text });
+    scanDocs().forEach(function (doc) {
+      doc.querySelectorAll('a').forEach(function (a) {
+        var text = (a.textContent || '').replace(/\s+/g, ' ').trim();
+        if (text.length < 2 || text.length > 60) return;
+        var realHref = '';
+        try { realHref = a.href || ''; } catch (e) {}
+        var isHttp = /^https?:/i.test(realHref);
+        var ok = isHttp
+          ? CHAPTER_HREF_RE.test(realHref)
+          : CHAPTER_TEXT_RE.test(text); // javascript:; / # / 无 href 的 JS 菜单
+        if (!ok) return;
+        var key = isHttp ? realHref : 'js:' + text;
+        if (seen[key]) return;
+        seen[key] = 1;
+        out.push({ href: isHttp ? realHref : '', text: text, el: a });
+      });
     });
-    return out.slice(0, 50);
+    return out.slice(0, 80);
   }
 
   // ---------- 面板 ----------
@@ -213,10 +239,16 @@
       links.forEach(function (l) {
         var item = document.createElement('div');
         item.textContent = l.text;
-        item.title = l.href;
+        item.title = l.href || l.text + '（页面内菜单，点击模拟）';
         item.style.cssText = 'padding:4px 6px;border-radius:4px;cursor:pointer;overflow:hidden;' +
           'text-overflow:ellipsis;white-space:nowrap';
-        item.addEventListener('click', function () { location.href = l.href; });
+        item.addEventListener('click', function () {
+          if (l.href) { location.href = l.href; return; }
+          try {
+            if (l.el && l.el.isConnected) { l.el.click(); toast('已点击「' + l.text + '」'); }
+            else { toast('菜单已失效，请刷新页面后重开面板'); }
+          } catch (e) { toast('跳转失败'); }
+        });
         linksBox.appendChild(item);
       });
     }
@@ -228,16 +260,31 @@
     return !!document.querySelector('video') || chapterLinks().length > 0 ||
       /(course|learn|mooc|knowledge|student|work|video)/i.test(location.href);
   }
+  // 检查顶层文档及其同源 iframe 里是否已有面板，避免多面板重复
+  function panelExistsUpstairs() {
+    try {
+      var top = window.top;
+      if (top.document.getElementById(PANEL_ID)) return true;
+      var found = false;
+      top.document.querySelectorAll('iframe').forEach(function (f) {
+        try {
+          var d = f.contentDocument;
+          if (d && d.getElementById(PANEL_ID)) found = true;
+        } catch (e) {}
+      });
+      return found;
+    } catch (e) { return false; }
+  }
   function maybeCreate() {
     if (created) return;
     if (window.top === window.self) {
       if (looksLikeCourse()) { createPanel(); created = true; }
-    } else {
-      try {
-        if (window.top.document.getElementById(PANEL_ID)) { created = true; return; }
-      } catch (e) {}
-      // 跨域 iframe：自己就是播放器帧时才建面板，避免满屏重复
-      if (document.querySelector('video')) { createPanel(); created = true; }
+      return;
+    }
+    if (panelExistsUpstairs()) { created = true; return; }
+    // 顶层没建面板时：有视频的播放器帧、或有章节菜单的目录帧都自己建面板
+    if (document.querySelector('video') || chapterLinks().length > 0) {
+      createPanel(); created = true;
     }
   }
 
