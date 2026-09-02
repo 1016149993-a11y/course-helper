@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网课观看辅助（WeLearn / 学习通 / ULearning）
 // @namespace    local.dsl-course-helper
-// @version      0.4.3
+// @version      0.4.4
 // @description  记忆播放位置、章节跳转、倍速播放（0.5x~16x）—— 仅优化观看体验，不伪造观看记录、不刷时长、不刷题
 // @author       1016149993-a11y
 // @license      MIT
@@ -396,7 +396,8 @@
   //   C. 框架绑定菜单：Knockout data-bind="text: ..." 文本节点（优学院/U学院等 SPA），
   //      向上找 data-bind 含 click: 的可点击容器（li/a），模拟 click
   var CHAPTER_HREF_RE = /(video|chapter|learn|course|work|detail|knowledge|card|list)/i;
-  var CHAPTER_TEXT_RE = /(第\s*[\d一二三四五六七八九十百]+\s*[章节讲单元课]|chapter|unit\s*[\d一二三四五六七八九十]|lesson|section\s*\d|module\s*\d)/i;
+  // 章节文本特征：第X章/节/单元、Unit/Lesson/Chapter，或数字编号开头（学习通样式如 "2.2 应力"）
+  var CHAPTER_TEXT_RE = /(第\s*[\d一二三四五六七八九十百]+\s*[章节讲单元课]|chapter|unit\s*[\d一二三四五六七八九十]|lesson|section\s*\d|module\s*\d|^\s*\d+(\.\d+)+\s)/i;
 
   // 收集当前文档 + 同源 iframe（含嵌套）
   function scanDocs() {
@@ -448,10 +449,13 @@
         addTarget(el_closestClickable(el) || (el.tagName === 'A' ? el : null), text, '');
       });
       // Pass C：内联 onclick 菜单项（学习通等 jQuery 时代页面，无 href 无 data-bind）
+      // 文本符合章节特征，或类名含 catalog/chapter（如学习通 posCatalog_name）
       doc.querySelectorAll('[onclick]').forEach(function (el) {
         var text = (el.textContent || '').replace(/\s+/g, ' ').trim();
         if (text.length < 2 || text.length > 60) return;
-        if (!CHAPTER_TEXT_RE.test(text)) return;
+        var cls = '';
+        try { cls = String(el.className || ''); } catch (e) {}
+        if (!CHAPTER_TEXT_RE.test(text) && !/catalog|chapter/i.test(cls)) return;
         addTarget(el, text, '');
       });
     });
