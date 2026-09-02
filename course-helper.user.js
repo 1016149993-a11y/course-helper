@@ -1,18 +1,24 @@
 // ==UserScript==
 // @name         网课观看辅助（WeLearn / 学习通 / ULearning）
 // @namespace    local.dsl-course-helper
-// @version      0.1.0
-// @description  记忆播放位置、章节跳转、倍速播放 —— 仅优化观看体验，不伪造观看记录、不刷时长、不刷题
+// @version      0.2.0
+// @description  记忆播放位置、章节跳转、倍速播放（0.5x~16x）—— 仅优化观看体验，不伪造观看记录、不刷时长、不刷题
+// @author       1016149993-a11y
+// @license      MIT
 // @match        *://*.chaoxing.com/*
 // @match        *://*.unipus.cn/*
 // @match        *://*.ulearning.cn/*
 // @match        *://*.ulearning.com.cn/*
 // @run-at       document-idle
 // @grant        none
+// @homepageURL  https://github.com/1016149993-a11y/course-helper
+// @supportURL   https://github.com/1016149993-a11y/course-helper/issues
+// @updateURL    https://raw.githubusercontent.com/1016149993-a11y/course-helper/main/course-helper.user.js
+// @downloadURL  https://raw.githubusercontent.com/1016149993-a11y/course-helper/main/course-helper.user.js
 // ==/UserScript==
 //
-// 安装：浏览器装好 Tampermonkey（Chrome/Edge 扩展商店搜）→ 新建脚本 → 粘贴本文件内容保存；
-//       或把本文件保存为 course-helper.user.js 后直接拖进浏览器。
+// 安装：Tampermonkey 或 脚本猫（ScriptCat）→ 直接打开本文件的 Raw 链接会提示安装；
+//       或在脚本管理器中新建脚本 → 粘贴本文件内容保存。
 //
 // 功能：右下角 ⚡ 按钮打开面板 ——
 //   1. 倍速：0.5x ~ 16x，只调用浏览器原生 video.playbackRate（和平台自带倍速同一机制）。

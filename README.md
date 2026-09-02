@@ -10,9 +10,21 @@
 
 ## 安装
 
+支持 **Tampermonkey** 和 **脚本猫（ScriptCat）** 两种脚本管理器，任选其一：
+
+### 方式一：Tampermonkey
+
 1. 浏览器安装 [Tampermonkey](https://www.tampermonkey.net/)（Chrome / Edge 扩展商店均可）
 2. 打开 [course-helper.user.js](course-helper.user.js) 原始文件，Tampermonkey 会提示安装；或手动新建脚本后粘贴保存
+
+### 方式二：脚本猫（ScriptCat）
+
+1. 浏览器安装 [脚本猫 ScriptCat](https://github.com/scriptscat/scriptcat)（Chrome / Edge / Firefox 扩展商店均有；MV3 浏览器上如无法运行，需在扩展管理中开启「允许用户脚本」或开发者模式）
+2. 打开 [course-helper.user.js](course-helper.user.js) 原始文件（Raw 链接），脚本猫会提示安装；或在脚本猫面板中新建脚本后粘贴保存
+
 3. 打开网课页面，右下角出现 ⚡ 按钮即生效
+
+> 脚本已内置 `@updateURL` / `@downloadURL`（指向本仓库 Raw 文件），两种管理器都会自动检查更新。
 
 ## 支持平台
 
