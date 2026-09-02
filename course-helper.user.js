@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网课观看辅助（WeLearn / 学习通 / ULearning）
 // @namespace    local.dsl-course-helper
-// @version      0.4.5
+// @version      0.4.6
 // @description  记忆播放位置、章节跳转、倍速播放（0.5x~16x）—— 仅优化观看体验，不伪造观看记录、不刷时长、不刷题
 // @author       1016149993-a11y
 // @license      MIT
@@ -379,12 +379,22 @@
     toast('本节播完，3 秒后进入：' + next.text);
     setTimeout(function () {
       try {
-        if (next.href) {
-          location.href = next.href;
-          return;
+        if (next.href) { location.href = next.href; return; }
+        // 重新扫描最新引用，避免学习通卡片区重渲染导致元素失效
+        var fresh = null, links2 = chapterLinks();
+        for (var k = 0; k < links2.length; k++) {
+          if (links2[k].text === next.text) { fresh = links2[k]; break; }
         }
-        if (next.el && next.el.isConnected) { next.el.click(); toast('已切换：' + next.text); }
-        else { toast('下一节入口已失效，请手动切换'); }
+        var target = (fresh && fresh.el && fresh.el.isConnected) ? fresh.el
+                   : (next.el && next.el.isConnected ? next.el : null);
+        if (target) { target.click(); toast('已切换：' + next.text); return; }
+        // 兜底：直接执行内联 onclick（学习通 getTeacherAjax）
+        var oc = (fresh && fresh.onclick) || next.onclick;
+        if (oc) {
+          try { var w = window.top || window; w.eval(oc); toast('已切换：' + next.text); return; }
+          catch (e) { dbg('eval onclick 失败', e); }
+        }
+        toast('下一节入口已失效，请手动切换');
       } catch (e) { dbg('切换失败', e); }
     }, 3000);
   }
@@ -419,10 +429,10 @@
 
   function chapterLinks() {
     var seenHref = {}, seenTargets = [], out = [];
-    function addTarget(target, text, href) {
+    function addTarget(target, text, href, onclick) {
       if (!target || seenTargets.indexOf(target) !== -1) return;
       seenTargets.push(target);
-      out.push({ href: href || '', text: text, el: target });
+      out.push({ href: href || '', text: text, el: target, onclick: onclick || '' });
     }
     frameDocs().forEach(function (doc) {
       // Pass A：<a> 真链接 / 章节文本 JS 菜单
@@ -434,10 +444,10 @@
         if (/^https?:/i.test(realHref)) {
           if (CHAPTER_HREF_RE.test(realHref) && !seenHref[realHref]) {
             seenHref[realHref] = 1;
-            addTarget(a, text, realHref);
+            addTarget(a, text, realHref, '');
           }
         } else if (CHAPTER_TEXT_RE.test(text)) {
-          addTarget(el_closestClickable(a) || a, text, '');
+          addTarget(el_closestClickable(a) || a, text, '', a.getAttribute('onclick') || '');
         }
       });
       // Pass B：Knockout 等框架的 data-bind 文本节点
@@ -446,7 +456,7 @@
         if (!/text\s*:/.test(bind)) return;
         var text = (el.textContent || '').replace(/\s+/g, ' ').trim();
         if (text.length < 2 || text.length > 60) return;
-        addTarget(el_closestClickable(el) || (el.tagName === 'A' ? el : null), text, '');
+        addTarget(el_closestClickable(el) || (el.tagName === 'A' ? el : null), text, '', el.getAttribute('onclick') || '');
       });
       // Pass C：内联 onclick 菜单项（学习通等 jQuery 时代页面，无 href 无 data-bind）
       // 文本符合章节特征，或类名含 catalog/chapter（如学习通 posCatalog_name）
@@ -456,7 +466,7 @@
         var cls = '';
         try { cls = String(el.className || ''); } catch (e) {}
         if (!CHAPTER_TEXT_RE.test(text) && !/catalog|chapter/i.test(cls)) return;
-        addTarget(el, text, '');
+        addTarget(el, text, '', el.getAttribute('onclick') || '');
       });
     });
     return out.slice(0, 80);

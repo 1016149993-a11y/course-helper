@@ -4,6 +4,16 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.6] - 2026-09-02
+
+### 修复
+
+- **学习通自动切节报"入口已失效"**：视频播完触发自动切节时，3 秒后点击章节元素，
+  但此时学习通卡片区已重渲染、原元素引用失效。
+  - 点击前重新扫描 `chapterLinks()` 获取最新元素引用
+  - 兜底：直接在内联 `onclick` 字符串上执行 `window.top.eval`（学习通的 `getTeacherAjax`）
+  - 章节条目现记录 `onclick` 属性字符串以支持兜底
+
 ## [0.4.5] - 2026-09-02
 
 ### 变更
