@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网课观看辅助（WeLearn / 学习通 / ULearning）
 // @namespace    local.dsl-course-helper
-// @version      0.4.0
+// @version      0.4.1
 // @description  记忆播放位置、章节跳转、倍速播放（0.5x~16x）—— 仅优化观看体验，不伪造观看记录、不刷时长、不刷题
 // @author       1016149993-a11y
 // @license      MIT
@@ -223,6 +223,25 @@
     }
   }
 
+  // 在文档中找实际的滚动容器：优先整页滚动，其次overflow为auto/scroll且内容溢出的最大容器
+  function findScroller(doc) {
+    try {
+      var se = doc.scrollingElement || doc.documentElement;
+      if (se && se.scrollHeight > se.clientHeight + 50) return se;
+      var all = doc.querySelectorAll('div,main,section');
+      var best = null;
+      for (var i = 0; i < all.length && i < 400; i++) {
+        var el = all[i];
+        var oy;
+        try { oy = doc.defaultView.getComputedStyle(el).overflowY; } catch (e) { continue; }
+        if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight + 100) {
+          if (!best || el.scrollHeight > best.scrollHeight) best = el;
+        }
+      }
+      return best;
+    } catch (e) { return null; }
+  }
+
   // 优学院/ULearning 推进核心（主循环每 3 秒驱动一次，ended 事件可提前触发）
   // 返回：'quiz'（题目页不自动推进）| 'modal'（弹窗已点，等下轮）| 'play'（续播中）
   //      | 'next'（已点下一页）| 'wait'（节流或等待完成标记）| null（非优学院页面）
@@ -276,7 +295,30 @@
         }
         return 'wait';
       }
-      // 3) 本页全部看完（或本页无视频）→ 官方"下一页"按钮
+      // 本页视频全部看完 → 继续下方滚动/翻页检查
+    }
+    // 3) 文档/课件页：自动向下滚动，滚到底才允许翻页
+    for (i = 0; i < docs.length; i++) {
+      if (docs[i].querySelector('.file-media')) continue; // 视频页不滚动
+      if (!docs[i].querySelector('.doc-wrapper, .doc-player-component, .file-doc')) continue;
+      var sc = findScroller(docs[i]);
+      if (sc) {
+        var atBottom = sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 10;
+        if (!atBottom) {
+          if (advanceThrottled()) {
+            try {
+              sc.scrollTop += Math.max(300, Math.floor(sc.clientHeight * 0.9));
+              dbg('课件页自动滚动：', Math.floor(sc.scrollTop), '/', sc.scrollHeight);
+            } catch (e) {}
+          }
+          return 'scroll';
+        }
+        dbg('课件页已滚动到底');
+      }
+      // 已到底或找不到滚动容器 → 继续翻页
+    }
+    // 4) 官方"下一页"按钮
+    for (i = 0; i < docs.length; i++) {
       var np = docs[i].querySelector('.next-page-btn.cursor');
       if (np) {
         // 刚播完的视频给平台完成标记留时间（≥8 秒）
@@ -289,11 +331,9 @@
   }
 
   function autoNext(endedVideo) {
-    // 优学院/ULearning：官方"下一页"按钮路径优先
+    // 优学院/ULearning：轮询推进（弹窗 → 续播 → 课件滚动 → 翻页）
     var r = ulearningAdvance(endedVideo);
-    if (r === 'modal') { toast('页面有弹窗，3 秒后重试'); setTimeout(function () { autoNext(endedVideo); }, 3000); return; }
-    if (r === 'play') return;
-    if (r === 'next') { toast('已自动进入下一节'); return; }
+    if (r) { if (r === 'next') toast('已自动进入下一节'); return; }
     // —— 通用路径：章节列表定位 ——
     var links = chapterLinks();
     dbg('自动下一章节触发，检测到章节条目：', links.length);

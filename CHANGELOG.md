@@ -4,6 +4,19 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.1] - 2026-09-02
+
+### 新增
+
+- **课件页自动滚动**：检测到文档组件（`.doc-wrapper` / `.doc-player-component` / `.file-doc`）时，
+  每 3 秒自动向下滚动约一屏，滚到页面底部后才点击"下一页"进入下一章节；自动寻找实际滚动容器
+  （整页滚动或 overflow 为 auto/scroll 的最大容器）
+
+### 修复
+
+- `autoNext` 现在遇到优学院推进路径的任何结果（滚动中/续播中等）都会终止，
+  不再误入通用章节列表路径
+
 ## [0.4.0] - 2026-09-02
 
 ### 变更
