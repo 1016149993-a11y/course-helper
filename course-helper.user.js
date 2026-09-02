@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网课观看辅助（WeLearn / 学习通 / ULearning）
 // @namespace    local.dsl-course-helper
-// @version      0.4.2
+// @version      0.4.3
 // @description  记忆播放位置、章节跳转、倍速播放（0.5x~16x）—— 仅优化观看体验，不伪造观看记录、不刷时长、不刷题
 // @author       1016149993-a11y
 // @license      MIT
@@ -446,6 +446,13 @@
         var text = (el.textContent || '').replace(/\s+/g, ' ').trim();
         if (text.length < 2 || text.length > 60) return;
         addTarget(el_closestClickable(el) || (el.tagName === 'A' ? el : null), text, '');
+      });
+      // Pass C：内联 onclick 菜单项（学习通等 jQuery 时代页面，无 href 无 data-bind）
+      doc.querySelectorAll('[onclick]').forEach(function (el) {
+        var text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+        if (text.length < 2 || text.length > 60) return;
+        if (!CHAPTER_TEXT_RE.test(text)) return;
+        addTarget(el, text, '');
       });
     });
     return out.slice(0, 80);

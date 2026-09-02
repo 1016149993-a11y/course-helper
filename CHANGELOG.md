@@ -4,6 +4,15 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.3] - 2026-09-02
+
+### 修复
+
+- **学习通章节识别**：学习通是 jQuery 时代页面，章节项为内联 `onclick` 元素
+  （无真实 href、无 data-bind），此前两条规则均抓不到。
+  新增 Pass C：扫描带内联 `onclick` 且文本符合章节特征（第X章 / Unit X 等）的元素，
+  点击时模拟原生 `click()`
+
 ## [0.4.2] - 2026-09-02
 
 ### 修复
