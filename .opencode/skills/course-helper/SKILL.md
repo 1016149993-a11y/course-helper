@@ -55,14 +55,15 @@ course-helper/
 | 答案源 | 说明 |
 |--------|------|
 | `firstOptionSource()` | 默认源，返回 `unknown`，让答题器兜底 |
-| `questionBankSource(bank)` | 从 `window._courseHelperQuestionBank` 查答案 |
+| `questionBankSource(bank)` | 从 `window._courseHelperQuestionBank` 或本地积累题库查答案 |
 | `llmAnswerSource(config)` | 远程 LLM / API 源（占位） |
 
-优先级：`window._courseHelperAnswerSource` > `window._courseHelperQuestionBank` > 默认兜底。
+优先级：`window._courseHelperAnswerSource` > 本地积累题库 + `window._courseHelperQuestionBank` > 默认兜底。
 
 ### 如何提高正确率
 
-1. 在油猴脚本管理器中再装一个前置脚本，注入题库：
+1. **做题后自动积累（最轻量）**：开启"自动提交"，脚本提交后会读取页面上的正确答案并存入 `localStorage`。下次遇到同一道题自动使用正确答案。
+2. **注入外部题库**：
 
 ```javascript
 window._courseHelperQuestionBank = {
@@ -71,7 +72,7 @@ window._courseHelperQuestionBank = {
 };
 ```
 
-2. 或直接注入自定义答案源对象：
+3. **自定义答案源**：
 
 ```javascript
 window._courseHelperAnswerSource = {
@@ -83,7 +84,7 @@ window._courseHelperAnswerSource = {
 };
 ```
 
-3. 修改源码中的 `questionBankSource` 或 `llmAnswerSource`，接入本地/远程题库 API。
+4. **修改源码**：扩展 `questionBankSource` 或 `llmAnswerSource`，接入本地/远程题库 API。
 
 ## 修改流程
 

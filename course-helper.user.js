@@ -49,6 +49,7 @@
   var QUIZ_KEY = 'dsl_quizpause_';
   var ANSWER_KEY = 'dsl_autoanswer';
   var SUBMIT_KEY = 'dsl_autosubmit';
+  var BANK_KEY = 'dsl_qbank_';
   var lastQuizTipAt = 0, lastEndedAt = 0, lastActionLocal = 0, noVideoTicks = 0;
   var SPEEDS = [0.5, 1, 1.25, 1.5, 1.75, 2, 3, 4, 8, 16];
 
@@ -283,16 +284,155 @@
     };
   }
 
+  // ---------- 本地题库持久化（做题后自动积累） ----------
+  // 本机做过的正确答案会存入 localStorage，下次遇到相同题目自动使用。
+  // 同时支持外部通过 window._courseHelperQuestionBank 注入“只读/补充题库”。
+  function localBankKey() { return BANK_KEY + location.hostname; }
+
+  function loadLocalBank() {
+    try {
+      var p = localStorage.getItem(localBankKey());
+      if (!p) return {};
+      var o = JSON.parse(p);
+      return (o && typeof o === 'object') ? o : {};
+    } catch (e) { return {}; }
+  }
+
+  function saveLocalBank(bank) {
+    try {
+      localStorage.setItem(localBankKey(), JSON.stringify(bank));
+    } catch (e) { dbg('保存题库失败', e); }
+  }
+
+  function mergeQuestionBank() {
+    var bank = loadLocalBank();
+    // 外部注入的题库优先级更高，覆盖本地错误答案
+    if (window._courseHelperQuestionBank) {
+      for (var k in window._courseHelperQuestionBank) {
+        bank[k] = window._courseHelperQuestionBank[k];
+      }
+    }
+    return bank;
+  }
+
   // 获取当前答案源。优先级：
   // 1. window._courseHelperAnswerSource（用户自定义源）
-  // 2. window._courseHelperQuestionBank（题库对象）
+  // 2. mergeQuestionBank()（本地积累 + 外部注入题库）
   // 3. 默认首个选项兜底源
   function getAnswerSource() {
     try {
       if (window._courseHelperAnswerSource) return window._courseHelperAnswerSource;
-      if (window._courseHelperQuestionBank) return questionBankSource(window._courseHelperQuestionBank);
+      return questionBankSource(mergeQuestionBank());
     } catch (e) { dbg('读取答案源异常', e); }
     return firstOptionSource();
+  }
+
+  // 从页面提取各题正确答案并写入本地题库
+  function collectAnswersFromPage(doc, platform) {
+    var bank = loadLocalBank();
+    var count = 0;
+    try {
+      var questions = findQuestionsForCollect(doc, platform);
+      for (var i = 0; i < questions.length; i++) {
+        var q = questions[i];
+        var text = getQuestionText(q);
+        if (!text) continue;
+        var ans = extractCorrectAnswer(q, platform);
+        if (ans && ans.type !== 'unknown') {
+          bank[text] = ans;
+          count++;
+        }
+      }
+      if (count) {
+        saveLocalBank(bank);
+        dbg('已积累', count, '道题到本地题库');
+      }
+    } catch (e) { dbg('收集答案异常', e); }
+    return count;
+  }
+
+  function findQuestionsForCollect(doc, platform) {
+    if (platform === 'chaoxing') return doc.querySelectorAll('.questionLi, .TiMu, .Zy_TItle, .Py_Tk');
+    if (platform === 'ulearning') return doc.querySelectorAll('.question-setting-panel, .question-area, .question-wrapper, .question-box');
+    if (platform === 'unipus') return doc.querySelectorAll('.question-box, .question-item, .question-content, .question-wrap');
+    return [];
+  }
+
+  // 提取正确答案。平台差异大，目前先覆盖学习通常见情况，其他平台逐步扩展。
+  function extractCorrectAnswer(qEl, platform) {
+    try {
+      if (platform === 'chaoxing') return extractCorrectAnswerChaoxing(qEl);
+      if (platform === 'ulearning') return extractCorrectAnswerUlearning(qEl);
+      if (platform === 'unipus') return extractCorrectAnswerUnipus(qEl);
+    } catch (e) {}
+    return { type: 'unknown' };
+  }
+
+  function extractCorrectAnswerChaoxing(qEl) {
+    // 1. 找“正确答案”元素
+    var right = qEl.querySelector('.right_answer, .answer_p, .right-answer, .answerRight, .answer-right, .answer');
+    if (!right) return { type: 'unknown' };
+    var rightText = right.textContent.replace(/\s+/g, ' ').trim();
+    if (!rightText) return { type: 'unknown' };
+
+    // 2. 提取选项文本并匹配
+    var options = qEl.querySelectorAll('.option, .optionItem, .answer_d, label');
+    if (options.length) {
+      for (var i = 0; i < options.length; i++) {
+        var optText = options[i].textContent.replace(/\s+/g, ' ').trim();
+        if (optText && (rightText.indexOf(optText) === 0 || optText.indexOf(rightText) === 0 || rightText === optText)) {
+          return { type: 'index', index: i };
+        }
+      }
+    }
+
+    // 3. 选项只显示 A/B/C/D 时，按首字母映射
+    var letterMap = { 'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5 };
+    var m = rightText.match(/[ABCDEF]/);
+    if (m && letterMap[m[0]] !== undefined) {
+      var idx = letterMap[m[0]];
+      // 校验该位置是否有 radio/checkbox
+      var allRadios = qEl.querySelectorAll('input[type="radio"], input[type="checkbox"]');
+      if (idx < allRadios.length) return { type: 'index', index: idx };
+    }
+
+    // 4. 按文本答案处理（填空题）
+    var val = rightText.replace(/^正确答案[：:]?\s*/i, '').replace(/^答案[：:]?\s*/i, '');
+    if (val) return { type: 'text', value: val };
+    return { type: 'unknown' };
+  }
+
+  function extractCorrectAnswerUlearning(qEl) {
+    // 优学院常见：提交后正确答案显示在 .right-answer / .correct 中
+    var right = qEl.querySelector('.right-answer, .correct, .answer, .result, .correct-answer');
+    if (!right) return { type: 'unknown' };
+    var rightText = right.textContent.replace(/\s+/g, ' ').trim();
+    if (!rightText) return { type: 'unknown' };
+
+    var options = qEl.querySelectorAll('.option, .question-option, label');
+    for (var i = 0; i < options.length; i++) {
+      var optText = options[i].textContent.replace(/\s+/g, ' ').trim();
+      if (optText && rightText.indexOf(optText) !== -1) {
+        return { type: 'index', index: i };
+      }
+    }
+    return { type: 'text', value: rightText };
+  }
+
+  function extractCorrectAnswerUnipus(qEl) {
+    var right = qEl.querySelector('.right-answer, .correct, .answer, .result');
+    if (!right) return { type: 'unknown' };
+    var rightText = right.textContent.replace(/\s+/g, ' ').trim();
+    if (!rightText) return { type: 'unknown' };
+
+    var options = qEl.querySelectorAll('.option, .answer-item, label');
+    for (var i = 0; i < options.length; i++) {
+      var optText = options[i].textContent.replace(/\s+/g, ' ').trim();
+      if (optText && rightText.indexOf(optText) !== -1) {
+        return { type: 'index', index: i };
+      }
+    }
+    return { type: 'text', value: rightText };
   }
 
   // 提取题目文本（优先题目主干元素，回退到整个题目容器）
@@ -560,6 +700,7 @@
   }
 
   // 监听提交按钮，点击后尝试恢复连播；使用事件委托避免动态渲染导致绑定失效
+  // 提交成功后尝试收集正确答案，积累到本地题库。
   function watchQuizSubmission() {
     var q = detectQuizPage();
     if (!q) return;
@@ -577,7 +718,12 @@
         }
         if (isSubmit) {
           // 延迟等待平台渲染结果/切换页面
-          setTimeout(function () { setQuizPaused(false); dbg('检测到提交按钮点击，清除题目页暂停'); }, 1500);
+          setTimeout(function () {
+            setQuizPaused(false);
+            dbg('检测到提交按钮点击，清除题目页暂停');
+            // 尝试收集本次正确答案
+            collectAnswersFromPage(q.doc, q.platform);
+          }, 1500);
         }
       });
     }
@@ -621,8 +767,9 @@
         quizTip();
         return 'quiz';
       }
-      // 题目页但已作答/已完成，允许继续推进
+      // 题目页但已作答/已完成，允许继续推进；同时收集正确答案
       setQuizPaused(false);
+      collectAnswersFromPage(q.doc, q.platform);
     }
     // 1) 平台弹窗（统计/提示）挡路 → 点掉，下一轮继续
     for (i = 0; i < docs.length; i++) {
@@ -712,7 +859,9 @@
         quizTip();
         return 'quiz';
       }
+      // 题目页但已作答/已完成，允许继续推进；同时收集正确答案
       setQuizPaused(false);
+      collectAnswersFromPage(q.doc, q.platform);
     }
     var vids = allVideos();
     for (var i = 0; i < vids.length; i++) {
@@ -778,7 +927,9 @@
         quizTip();
         return;
       }
+      // 题目页但已作答/已完成，允许继续推进；同时收集正确答案
       setQuizPaused(false);
+      collectAnswersFromPage(q.doc, q.platform);
     }
     // tick 驱动（endedVideo 为空）时做冷却，避免无视频页连续跳章；ended 触发不限制
     if (!endedVideo) {
@@ -941,7 +1092,12 @@
       '<label style="display:flex;align-items:center;gap:6px;margin:0 0 10px;user-select:none;cursor:pointer">' +
       '<input type="checkbox" id="' + PANEL_ID + '-autosubmit">自动提交</label>' +
       '<div style="margin:4px 0">章节</div>' +
-      '<div id="' + PANEL_ID + '-links" style="max-height:180px;overflow:auto"></div></div>';
+      '<div id="' + PANEL_ID + '-links" style="max-height:180px;overflow:auto;margin-bottom:10px"></div>' +
+      '<div style="margin:4px 0">题库</div>' +
+      '<div style="display:flex;gap:6px;margin-bottom:6px">' +
+      '<button id="' + PANEL_ID + '-exportbank" style="flex:1;border:1px solid #c5c5c5;background:#f5f5f5;border-radius:4px;padding:3px 0;cursor:pointer;font-size:12px">导出题库</button>' +
+      '<button id="' + PANEL_ID + '-clearbank" style="flex:1;border:1px solid #c5c5c5;background:#f5f5f5;border-radius:4px;padding:3px 0;cursor:pointer;font-size:12px">清空题库</button></div>' +
+      '<div id="' + PANEL_ID + '-bankcount" style="font-size:12px;color:#666"></div></div>';
     document.documentElement.appendChild(panel);
 
     var btn = document.createElement('div');
@@ -1005,8 +1161,42 @@
       toast(autoSubmitChk.checked ? '已开启自动提交' : '已关闭自动提交');
     });
 
+    function refreshBankInfo() {
+      var el = panel.querySelector('#' + PANEL_ID + '-bankcount');
+      if (!el) return;
+      var bank = loadLocalBank();
+      var n = 0;
+      for (var k in bank) if (bank.hasOwnProperty(k)) n++;
+      el.textContent = '本地积累 ' + n + ' 道题';
+    }
+
+    panel.querySelector('#' + PANEL_ID + '-exportbank').addEventListener('click', function () {
+      try {
+        var bank = loadLocalBank();
+        var blob = new Blob([JSON.stringify(bank, null, 2)], { type: 'application/json' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = 'course-helper-bank-' + location.hostname + '.json';
+        document.documentElement.appendChild(a);
+        a.click();
+        setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 1000);
+        toast('题库已导出');
+      } catch (e) { toast('导出失败'); dbg(e); }
+    });
+
+    panel.querySelector('#' + PANEL_ID + '-clearbank').addEventListener('click', function () {
+      try {
+        if (!confirm('确定清空本地积累的题库？')) return;
+        localStorage.removeItem(localBankKey());
+        refreshBankInfo();
+        toast('本地题库已清空');
+      } catch (e) { toast('清空失败'); }
+    });
+
     var linksBox = panel.querySelector('#' + PANEL_ID + '-links');
     function renderLinks() {
+      refreshBankInfo();
       var links = chapterLinks();
       linksBox.innerHTML = '';
       if (!links.length) {

@@ -23,6 +23,10 @@
   - `llmAnswerSource(config)`：LLM / 远程 API 源（占位）
   - 外部可通过 `window._courseHelperAnswerSource` 注入自定义源，
     或通过 `window._courseHelperQuestionBank` 注入题库对象
+- **本地题库自积累**：提交后会自动提取页面上的正确答案，
+  存入 `localStorage`，下次遇到相同题目时优先使用正确答案作答
+- **面板题库管理**：右下角面板新增"导出题库"和"清空题库"按钮，
+  可将积累的题库导出为 JSON，或一键清空
 
 ### 优化
 
