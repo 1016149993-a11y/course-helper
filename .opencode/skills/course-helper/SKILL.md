@@ -42,20 +42,48 @@ course-helper/
 | `detectQuizPage()` | 跨平台检测题目页（学习通/优学院/U校园），含 iframe 扫描 |
 | `isQuizDone()` | 判断当前题目页是否已经提交/完成 |
 | `autoAnswer()` | 自动答题入口，读取开关后分发到平台答题器 |
-| `answerChaoxing(doc)` | 学习通答题器：单选/多选选第一个未选项，填空填占位符 |
-| `answerUlearning(doc)` | 优学院答题器：选第一个未选项 |
-| `answerUnipus(doc)` | U校园/WeLearn 答题器：选第一个未选项 |
+| `answerChaoxing(doc, source)` | 学习通答题器 |
+| `answerUlearning(doc, source)` | 优学院答题器 |
+| `answerUnipus(doc, source)` | U校园/WeLearn 答题器 |
 | `maybeSubmit(doc)` | 自动点击提交按钮 |
 | `setQuizPaused()` / `isQuizPaused()` | 题目页暂停状态持久化 |
 
+### 答案源接口（AnswerSource）
+
+脚本已抽象出可插拔的答案源，默认策略是"未命中则选首个选项"，优先保证完成率：
+
+| 答案源 | 说明 |
+|--------|------|
+| `firstOptionSource()` | 默认源，返回 `unknown`，让答题器兜底 |
+| `questionBankSource(bank)` | 从 `window._courseHelperQuestionBank` 查答案 |
+| `llmAnswerSource(config)` | 远程 LLM / API 源（占位） |
+
+优先级：`window._courseHelperAnswerSource` > `window._courseHelperQuestionBank` > 默认兜底。
+
 ### 如何提高正确率
 
-当前没有内置题库，只能选第一个选项或填占位符。要提高正确率，需扩展各平台答题器：
+1. 在油猴脚本管理器中再装一个前置脚本，注入题库：
 
-1. 提取题目文本（`q.textContent.trim()`）
-2. 接入题库对象或调用外部题库接口
-3. 根据题库答案选中对应选项/填写真实答案
-4. 对于学习通，注意单选 `input[type="radio"]`、多选 `input[type="checkbox"]`、填空 `input[type="text"]/textarea` 的区别
+```javascript
+window._courseHelperQuestionBank = {
+  "题目文本": { type: "index", index: 2 },
+  "填空题文本": { type: "text", value: "答案" }
+};
+```
+
+2. 或直接注入自定义答案源对象：
+
+```javascript
+window._courseHelperAnswerSource = {
+  name: "my-source",
+  getAnswer: function (question) {
+    // question = { text, platform, type, el }
+    return { type: "unknown" };
+  }
+};
+```
+
+3. 修改源码中的 `questionBankSource` 或 `llmAnswerSource`，接入本地/远程题库 API。
 
 ## 修改流程
 

@@ -221,6 +221,139 @@
     try { return localStorage.getItem(SUBMIT_KEY) === '1'; } catch (e) { return false; }
   }
 
+  // ---------- 答案源（AnswerSource）接口 ----------
+  // 答案源用于把“题目”映射到“答案”。返回对象约定：
+  //   { type: 'index', index: 0 }                单选：选第 index 个选项（从 0 开始）
+  //   { type: 'multiple', indexes: [0, 2] }       多选：选中指定索引数组
+  //   { type: 'text', value: '...' }              填空：填入文本
+  //   { type: 'unknown' }                         不知道，使用兜底策略
+  // 外部可以通过 window._courseHelperAnswerSource 注入自定义源，
+  // 或注入 window._courseHelperQuestionBank 对象自动启用题库源。
+
+  function normalizeAnswer(ans) {
+    if (ans === null || ans === undefined) return { type: 'unknown' };
+    if (typeof ans === 'number') return { type: 'index', index: ans };
+    if (typeof ans === 'string') return { type: 'text', value: ans };
+    if (ans && typeof ans === 'object') {
+      if (ans.type === 'index' || ans.type === 'multiple' || ans.type === 'text') return ans;
+      if (Array.isArray(ans.indexes)) return { type: 'multiple', indexes: ans.indexes };
+      if (typeof ans.index === 'number') return { type: 'index', index: ans.index };
+      if (typeof ans.value === 'string') return { type: 'text', value: ans.value };
+    }
+    return { type: 'unknown' };
+  }
+
+  // 默认答案源：返回 unknown，让答题器使用兜底策略（选首个选项）
+  function firstOptionSource() {
+    return { name: 'first-option', getAnswer: function () { return { type: 'unknown' }; } };
+  }
+
+  // 题库答案源：根据题目文本从题库对象查答案
+  function questionBankSource(bank) {
+    return {
+      name: 'question-bank',
+      getAnswer: function (question) {
+        if (!bank) return { type: 'unknown' };
+        var text = (question.text || '').replace(/\s+/g, ' ').trim();
+        if (!text) return { type: 'unknown' };
+        // 精确匹配
+        if (bank[text]) return normalizeAnswer(bank[text]);
+        // 去掉首尾数字编号等干扰后匹配
+        var key2 = text.replace(/^\s*[\d一二三四五六七八九十]+[\.、]\s*/, '');
+        if (key2 !== text && bank[key2]) return normalizeAnswer(bank[key2]);
+        // 前 30 字模糊匹配（题库 key 通常以题目开头）
+        var head = text.slice(0, 30);
+        for (var k in bank) {
+          if (k.indexOf(head) === 0 || head.indexOf(k) === 0) return normalizeAnswer(bank[k]);
+        }
+        return { type: 'unknown' };
+      }
+    };
+  }
+
+  // 远程 LLM / API 答案源（占位）：可扩展为异步预加载题库，
+  // 油猴脚本内不建议同步请求网络，避免卡死页面。
+  function llmAnswerSource(config) {
+    return {
+      name: 'llm',
+      getAnswer: function (question) {
+        dbg('LLM 答案源占位：', question.text.slice(0, 40));
+        return { type: 'unknown' };
+      }
+    };
+  }
+
+  // 获取当前答案源。优先级：
+  // 1. window._courseHelperAnswerSource（用户自定义源）
+  // 2. window._courseHelperQuestionBank（题库对象）
+  // 3. 默认首个选项兜底源
+  function getAnswerSource() {
+    try {
+      if (window._courseHelperAnswerSource) return window._courseHelperAnswerSource;
+      if (window._courseHelperQuestionBank) return questionBankSource(window._courseHelperQuestionBank);
+    } catch (e) { dbg('读取答案源异常', e); }
+    return firstOptionSource();
+  }
+
+  // 提取题目文本（优先题目主干元素，回退到整个题目容器）
+  function getQuestionText(qEl) {
+    try {
+      var title = qEl.querySelector('.Zy_TItle, .Zy_TItle_c, .title, .question-title, .topic-title, .stem, .q-stem, .questionName, .question-name');
+      if (title) return title.textContent.replace(/\s+/g, ' ').trim();
+      return qEl.textContent.replace(/\s+/g, ' ').trim();
+    } catch (e) { return ''; }
+  }
+
+  // 根据答案对象在题目容器上执行选择/填写
+  function applyAnswer(qEl, answer) {
+    if (!answer || answer.type === 'unknown') return false;
+    var changed = false;
+    if (answer.type === 'index') {
+      var radios = qEl.querySelectorAll('input[type="radio"]');
+      if (answer.index >= 0 && answer.index < radios.length && !radios[answer.index].checked) {
+        radios[answer.index].click(); changed = true;
+      }
+      var checks = qEl.querySelectorAll('input[type="checkbox"]');
+      if (!changed && answer.index >= 0 && answer.index < checks.length && !checks[answer.index].checked) {
+        checks[answer.index].click(); changed = true;
+      }
+    }
+    if (answer.type === 'multiple') {
+      var checks2 = qEl.querySelectorAll('input[type="checkbox"]');
+      for (var i = 0; i < answer.indexes.length; i++) {
+        var idx = answer.indexes[i];
+        if (idx >= 0 && idx < checks2.length && !checks2[idx].checked) {
+          checks2[idx].click(); changed = true;
+        }
+      }
+    }
+    if (answer.type === 'text') {
+      var inputs = qEl.querySelectorAll('input[type="text"], textarea, input:not([type])');
+      for (var j = 0; j < inputs.length; j++) {
+        if (!inputs[j].value) { inputs[j].value = answer.value; changed = true; break; }
+      }
+    }
+    return changed;
+  }
+
+  // 兜底策略：单选/多选选第一个未选项，填空填占位符
+  function fallbackFirstOption(qEl) {
+    var changed = false;
+    var radios = qEl.querySelectorAll('input[type="radio"]');
+    if (radios.length && !qEl.querySelector('input[type="radio"]:checked')) {
+      radios[0].click(); changed = true;
+    }
+    var checks = qEl.querySelectorAll('input[type="checkbox"]');
+    if (checks.length && !qEl.querySelector('input[type="checkbox"]:checked')) {
+      checks[0].click(); changed = true;
+    }
+    var inputs = qEl.querySelectorAll('input[type="text"], textarea, input:not([type])');
+    for (var i = 0; i < inputs.length; i++) {
+      if (!inputs[i].value) { inputs[i].value = '1'; changed = true; }
+    }
+    return changed;
+  }
+
   // 通用提交：匹配常见提交按钮，点击后清除暂停
   function maybeSubmit(doc) {
     if (!autoSubmitEnabled()) return false;
@@ -235,22 +368,20 @@
     } catch (e) { return false; }
   }
 
-  // 自动答题入口。当前为基础框架：
-  // 按平台调用对应的答题器，没有内置题库时按“选第一个选项 / 填占位符”处理。
-  // 扩展方式：在对应平台分支中接入题库匹配/随机选择/固定规则。
+  // 自动答题入口。按平台调用对应的答题器；答题器内部使用 getAnswerSource() 获取答案。
   function autoAnswer() {
     if (!autoAnswerEnabled()) return false;
     var q = detectQuizPage();
     if (!q || isQuizDone(q)) return false;
     try {
+      var source = getAnswerSource();
       var changed = false;
-      if (q.platform === 'chaoxing') changed = answerChaoxing(q.doc);
-      else if (q.platform === 'ulearning') changed = answerUlearning(q.doc);
-      else if (q.platform === 'unipus') changed = answerUnipus(q.doc);
+      if (q.platform === 'chaoxing') changed = answerChaoxing(q.doc, source);
+      else if (q.platform === 'ulearning') changed = answerUlearning(q.doc, source);
+      else if (q.platform === 'unipus') changed = answerUnipus(q.doc, source);
       else { dbg('未支持的题目页平台，跳过自动答题：', q.platform); return false; }
       if (changed) {
-        toast('已自动选择答案，准备提交');
-        // 短暂延迟后自动提交（给平台渲染留时间）
+        toast('已自动选择答案（源：' + source.name + '），准备提交');
         setTimeout(function () { maybeSubmit(q.doc); }, 800);
       }
       return changed;
@@ -258,63 +389,49 @@
     return false;
   }
 
-  // 学习通答题器（框架示例）：
-  // 接入题库后可替换为按题目文本匹配答案。
-  function answerChaoxing(doc) {
+  // 学习通答题器：遍历题目，先查询答案源，无答案则兜底选首个选项
+  function answerChaoxing(doc, source) {
     var questions = doc.querySelectorAll('.questionLi, .TiMu, .Zy_TItle, .Py_Tk');
     if (!questions.length) { dbg('学习通题目页未识别到题目'); return false; }
     var changed = false;
     questions.forEach(function (q) {
-      // 单选/多选：选择第一个未选中的选项
-      var radios = q.querySelectorAll('input[type="radio"]');
-      if (radios.length && !q.querySelector('input[type="radio"]:checked')) {
-        radios[0].click(); changed = true;
-      }
-      var checks = q.querySelectorAll('input[type="checkbox"]');
-      if (checks.length && !q.querySelector('input[type="checkbox"]:checked')) {
-        checks[0].click(); changed = true;
-      }
-      // 填空：填入占位符（需要题库时替换为真实答案）
-      var inputs = q.querySelectorAll('input[type="text"], textarea, input:not([type])');
-      inputs.forEach(function (inp) {
-        if (!inp.value) { inp.value = '1'; changed = true; }
-      });
+      var text = getQuestionText(q);
+      var answer = source.getAnswer({ text: text, platform: 'chaoxing', type: 'unknown', el: q });
+      if (applyAnswer(q, answer)) { changed = true; return; }
+      // 题库源未命中时回退兜底
+      if (fallbackFirstOption(q)) { changed = true; dbg('学习通：题库未命中，兜底作答'); }
     });
-    if (changed) dbg('学习通：已自动选择占位答案');
+    if (changed) dbg('学习通：已自动作答');
     return changed;
   }
 
-  // 优学院答题器（框架示例）
-  function answerUlearning(doc) {
+  // 优学院答题器
+  function answerUlearning(doc, source) {
     var questions = doc.querySelectorAll('.question-setting-panel, .question-area, .question-wrapper, .question-box');
     if (!questions.length) { dbg('优学院题目页未识别到题目'); return false; }
     var changed = false;
     questions.forEach(function (q) {
-      var options = q.querySelectorAll('.option, .question-option, label');
-      if (options.length && !q.querySelector('input:checked, .selected, .active')) {
-        options[0].click(); changed = true;
-      }
+      var text = getQuestionText(q);
+      var answer = source.getAnswer({ text: text, platform: 'ulearning', type: 'unknown', el: q });
+      if (applyAnswer(q, answer)) { changed = true; return; }
+      if (fallbackFirstOption(q)) { changed = true; dbg('优学院：题库未命中，兜底作答'); }
     });
-    if (changed) dbg('优学院：已自动选择占位答案');
+    if (changed) dbg('优学院：已自动作答');
     return changed;
   }
 
-  // U校园/WeLearn 答题器（框架示例）
-  function answerUnipus(doc) {
+  // U校园/WeLearn 答题器
+  function answerUnipus(doc, source) {
     var questions = doc.querySelectorAll('.question-box, .question-item, .question-content, .question-wrap');
     if (!questions.length) { dbg('U校园题目页未识别到题目'); return false; }
     var changed = false;
     questions.forEach(function (q) {
-      var options = q.querySelectorAll('.option, .answer-item, label');
-      if (options.length && !q.querySelector('input:checked, .selected, .active')) {
-        options[0].click(); changed = true;
-      }
-      var inputs = q.querySelectorAll('input[type="text"], textarea');
-      inputs.forEach(function (inp) {
-        if (!inp.value) { inp.value = '1'; changed = true; }
-      });
+      var text = getQuestionText(q);
+      var answer = source.getAnswer({ text: text, platform: 'unipus', type: 'unknown', el: q });
+      if (applyAnswer(q, answer)) { changed = true; return; }
+      if (fallbackFirstOption(q)) { changed = true; dbg('U校园：题库未命中，兜底作答'); }
     });
-    if (changed) dbg('U校园：已自动选择占位答案');
+    if (changed) dbg('U校园：已自动作答');
     return changed;
   }
 
